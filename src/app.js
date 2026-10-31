@@ -65,4 +65,5 @@ app.use('/api', apiRoutes);
 app.use(notFoundHandler);
 app.use(errorHandler);
 
+// Vercel uses this exported Express application as its function entry point.
 module.exports = app;

@@ -1,14 +1,11 @@
 const { PrismaClient } = require('@prisma/client');
-const env = require('../config/env');
 
 const globalForPrisma = globalThis;
 
 function createPrismaClient() {
-  if (!env.databaseUrl) {
-    throw new Error(
-      'Database connection is not configured. Set DATABASE_URL, MYSQL_URL, or Railway MySQL vars first.',
-    );
-  }
+  // Do not throw here when DATABASE_URL is missing.
+  // This allows the Express app to start on serverless platforms.
+  // Prisma will report the configuration error when a DB query is executed.
 
   return new PrismaClient({
     log: ['error', 'warn'],
