@@ -1,0 +1,32 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "Local backend for the Sanad Flutter app",
+  "main": "src/server.js",
+  "scripts": {
+    "predev": "npm run prisma:generate",
+    "dev": "nodemon src/server.js",
+    "prestart": "npm run prisma:generate",
+    "start": "node src/server.js",
+    "check": "node --check src/server.js",
+    "db:check": "node src/scripts/check-db.js",
+    "seed:demo": "node src/scripts/seed-demo-http.js",
+    "prisma:generate": "prisma generate",
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:push": "prisma db push",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.2",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "prisma": "^6.19.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
