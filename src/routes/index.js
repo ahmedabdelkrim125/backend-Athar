@@ -10,6 +10,7 @@ const authRoutes = require('./auth.routes');
 const announcementRoutes = require('./announcement.routes');
 const attendanceRoutes = require('./attendance.routes');
 const campaignRoutes = require('./campaign.routes');
+const chatbotRoutes = require('./chatbot.routes');
 const communityRoutes = require('./community.routes');
 const demoAdminRoutes = require('./demo-admin.routes');
 const homeRoutes = require('./home.routes');
@@ -80,6 +81,7 @@ router.use('/tasks', taskRoutes);
 router.use('/reports', reportRoutes);
 router.use('/sos-requests', sosRequestRoutes);
 router.use('/community', communityRoutes);
+router.use('/chatbot', chatbotRoutes);
 router.use('/demo-admin', demoAdminRoutes);
 
 module.exports = router;
