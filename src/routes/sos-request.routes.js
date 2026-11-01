@@ -9,9 +9,12 @@ router.use(requireAuth);
 
 router.get('/', sosRequestController.listSosRequests);
 router.get('/active', sosRequestController.getActiveSosRequest);
+router.get('/nearby', sosRequestController.listNearbySosRequests);
 router.patch('/active/cancel', sosRequestController.cancelActiveSosRequest);
 router.post('/', sosRequestController.createSosRequest);
 router.get('/:requestId', sosRequestController.getSosRequestById);
+router.patch('/:requestId/location', sosRequestController.updateSosRequestLocation);
+router.post('/:requestId/respond', sosRequestController.respondToSosRequest);
 router.patch('/:requestId/status', sosRequestController.updateSosRequestStatus);
 
 module.exports = router;

@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const AppError = require('../utils/app-error');
+const { calculateDistanceMeters } = require('../utils/geolocation');
 const {
   serializePagination,
   serializeVolunteerSummary,
@@ -12,6 +13,20 @@ const {
 } = require('../validators/resource.validators');
 
 const ACTIVE_SOS_STATUSES = ['OPEN', 'RESPONDED'];
+const ACTIVE_WINDOW_HOURS = 12;
+const NEARBY_DEFAULT_RADIUS_KM = 10;
+const NEARBY_MAX_RADIUS_KM = 100;
+
+function activeSince() {
+  return new Date(Date.now() - ACTIVE_WINDOW_HOURS * 60 * 60 * 1000);
+}
+
+function isRequestActive(sosRequest) {
+  return (
+    ACTIVE_SOS_STATUSES.includes(sosRequest.status) &&
+    sosRequest.createdAt >= activeSince()
+  );
+}
 
 const volunteerSummarySelect = {
   id: true,
@@ -111,7 +126,7 @@ function serializeSosRequest(sosRequest) {
     },
     status: sosRequest.status,
     statusLabel: buildSosStatusLabel(sosRequest.status),
-    isActive: ACTIVE_SOS_STATUSES.includes(sosRequest.status),
+    isActive: isRequestActive(sosRequest),
     createdAt: sosRequest.createdAt?.toISOString() ?? null,
     resolvedAt: sosRequest.resolvedAt?.toISOString() ?? null,
     volunteer: serializeVolunteerSummary(sosRequest.volunteer),
@@ -125,6 +140,9 @@ async function findActiveSosRequest(volunteerId) {
       volunteerId,
       status: {
         in: ACTIVE_SOS_STATUSES,
+      },
+      createdAt: {
+        gte: activeSince(),
       },
     },
     include: sosRequestInclude,
@@ -225,10 +243,21 @@ async function createSosRequest(payload, volunteerId) {
   const existingActiveRequest = await findActiveSosRequest(volunteerId);
 
   if (existingActiveRequest) {
+    const refreshedRequest = await prisma.sosRequest.update({
+      where: {
+        id: existingActiveRequest.id,
+      },
+      data: {
+        latitude: validatedPayload.latitude,
+        longitude: validatedPayload.longitude,
+      },
+      include: sosRequestInclude,
+    });
+
     return {
       statusCode: 200,
       message: 'يوجد طلب طوارئ نشط بالفعل لهذا الحساب',
-      request: serializeSosRequest(existingActiveRequest),
+      request: serializeSosRequest(refreshedRequest),
       created: false,
     };
   }
@@ -311,11 +340,155 @@ async function updateSosRequestStatus(requestId, payload, volunteerId) {
   };
 }
 
+function parseRadiusKm(value) {
+  if (value === undefined || value === null || value === '') {
+    return NEARBY_DEFAULT_RADIUS_KM;
+  }
+
+  const parsedValue = Number(value);
+
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    throw new AppError('نصف القطر يجب أن يكون رقمًا أكبر من صفر', 400);
+  }
+
+  return Math.min(parsedValue, NEARBY_MAX_RADIUS_KM);
+}
+
+function serializeNearbySosRequest(sosRequest, distanceMeters) {
+  const serialized = serializeSosRequest(sosRequest);
+
+  return {
+    ...serialized,
+    distanceMeters,
+    volunteer: serialized.volunteer
+      ? {
+          id: serialized.volunteer.id,
+          fullName: serialized.volunteer.fullName,
+          phone: serialized.volunteer.phone,
+          avatarUrl: serialized.volunteer.avatarUrl,
+        }
+      : null,
+  };
+}
+
+async function updateSosRequestLocation(requestId, payload, volunteerId) {
+  const parsedRequestId = parsePositiveInteger(requestId, 'معرف الاستغاثة');
+  const { latitude, longitude } = validateSosRequestCreatePayload(payload);
+  const existingRequest = await getSosRequestOrThrow(parsedRequestId);
+
+  if (existingRequest.volunteerId !== volunteerId) {
+    throw new AppError('فقط صاحب الطلب يمكنه تحديث الموقع', 403);
+  }
+
+  if (!isRequestActive(existingRequest)) {
+    throw new AppError('طلب الاستغاثة لم يعد نشطًا', 409);
+  }
+
+  const sosRequest = await prisma.sosRequest.update({
+    where: {
+      id: parsedRequestId,
+    },
+    data: {
+      latitude,
+      longitude,
+    },
+    include: sosRequestInclude,
+  });
+
+  return {
+    message: 'تم تحديث موقع الاستغاثة بنجاح',
+    request: serializeSosRequest(sosRequest),
+  };
+}
+
+async function listNearbySosRequests(query, volunteerId) {
+  const { latitude, longitude } = validateSosRequestCreatePayload(query);
+  const radiusKm = parseRadiusKm(query.radiusKm);
+
+  const activeRequests = await prisma.sosRequest.findMany({
+    where: {
+      status: {
+        in: ACTIVE_SOS_STATUSES,
+      },
+      volunteerId: {
+        not: volunteerId,
+      },
+      createdAt: {
+        gte: activeSince(),
+      },
+    },
+    include: sosRequestInclude,
+    orderBy: {
+      createdAt: 'desc',
+    },
+    take: 200,
+  });
+
+  const nearbyRequests = activeRequests
+    .map((sosRequest) => ({
+      sosRequest,
+      distanceMeters: calculateDistanceMeters(
+        latitude,
+        longitude,
+        sosRequest.latitude,
+        sosRequest.longitude,
+      ),
+    }))
+    .filter(
+      (item) =>
+        item.distanceMeters !== null && item.distanceMeters <= radiusKm * 1000,
+    )
+    .sort((a, b) => a.distanceMeters - b.distanceMeters);
+
+  return {
+    message: 'تم جلب طلبات الاستغاثة القريبة بنجاح',
+    radiusKm,
+    requests: nearbyRequests.map((item) =>
+      serializeNearbySosRequest(item.sosRequest, item.distanceMeters),
+    ),
+  };
+}
+
+async function respondToSosRequest(requestId, volunteerId) {
+  const parsedRequestId = parsePositiveInteger(requestId, 'معرف الاستغاثة');
+  const existingRequest = await getSosRequestOrThrow(parsedRequestId);
+
+  if (existingRequest.volunteerId === volunteerId) {
+    throw new AppError('لا يمكنك الاستجابة لطلب الاستغاثة الخاص بك', 400);
+  }
+
+  if (!isRequestActive(existingRequest)) {
+    throw new AppError('طلب الاستغاثة لم يعد نشطًا', 409);
+  }
+
+  if (existingRequest.status === 'OPEN') {
+    await prisma.sosRequest.updateMany({
+      where: {
+        id: parsedRequestId,
+        status: 'OPEN',
+      },
+      data: {
+        status: 'RESPONDED',
+      },
+    });
+  }
+
+  const sosRequest = await getSosRequestOrThrow(parsedRequestId);
+
+  return {
+    message: 'تم تسجيل استجابتك لطلب الاستغاثة',
+    request: serializeSosRequest(sosRequest),
+  };
+}
+
 module.exports = {
   cancelActiveSosRequest,
   createSosRequest,
   getActiveSosRequest,
   getSosRequestById,
+  listNearbySosRequests,
   listSosRequests,
+  respondToSosRequest,
+  updateSosRequestLocation,
   updateSosRequestStatus,
 };
