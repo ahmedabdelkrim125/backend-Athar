@@ -1,7 +1,7 @@
-const AppError = require('../utils/app-error');
-const homeService = require('./home.service');
+const AppError = require("../utils/app-error");
+const homeService = require("./home.service");
 
-const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const MAX_HISTORY = 12;
 const MAX_MESSAGE_LENGTH = 1000;
 
@@ -24,8 +24,12 @@ const APP_RULES = `
 `;
 
 function formatTask(task) {
-  const campaign = task.campaign?.title ? ` - حملة: ${task.campaign.title}` : '';
-  const status = task.assignment?.status ? ` - الحالة: ${task.assignment.status}` : '';
+  const campaign = task.campaign?.title
+    ? ` - حملة: ${task.campaign.title}`
+    : "";
+  const status = task.assignment?.status
+    ? ` - الحالة: ${task.assignment.status}`
+    : "";
   return `• ${task.title}${campaign}${status}`;
 }
 
@@ -33,12 +37,14 @@ function buildSystemPrompt(summary) {
   const { volunteer, stats, todayTasks, upcomingTasks } = summary;
 
   const todayList = todayTasks.length
-    ? todayTasks.map(formatTask).join('\n')
-    : 'مفيش مهام النهارده';
+    ? todayTasks.map(formatTask).join("\n")
+    : "مفيش مهام النهارده";
 
   const upcomingList = upcomingTasks.length
-    ? upcomingTasks.map((task) => `${formatTask(task)} - التاريخ: ${task.date}`).join('\n')
-    : 'مفيش مهام قادمة';
+    ? upcomingTasks
+        .map((task) => `${formatTask(task)} - التاريخ: ${task.date}`)
+        .join("\n")
+    : "مفيش مهام قادمة";
 
   return [
     PERSONA.trim(),
@@ -51,7 +57,7 @@ function buildSystemPrompt(summary) {
 - عدد التقارير: ${stats.reports}`,
     `مهام النهارده:\n${todayList}`,
     `المهام القادمة:\n${upcomingList}`,
-  ].join('\n\n');
+  ].join("\n\n");
 }
 
 function sanitizeMessages(rawMessages) {
@@ -63,8 +69,8 @@ function sanitizeMessages(rawMessages) {
     .filter(
       (message) =>
         message &&
-        (message.role === 'user' || message.role === 'assistant') &&
-        typeof message.content === 'string' &&
+        (message.role === "user" || message.role === "assistant") &&
+        typeof message.content === "string" &&
         message.content.trim().length > 0,
     )
     .slice(-MAX_HISTORY)
@@ -78,13 +84,13 @@ async function sendMessage(volunteerId, rawMessages) {
   const apiKey = process.env.GROQ_API_KEY;
 
   if (!apiKey) {
-    throw new AppError('المساعد غير مفعل حاليًا', 503);
+    throw new AppError("المساعد غير مفعل حاليًا", 503);
   }
 
   const history = sanitizeMessages(rawMessages);
 
-  if (history.length === 0 || history[history.length - 1].role !== 'user') {
-    throw new AppError('الرسالة مطلوبة', 400);
+  if (history.length === 0 || history[history.length - 1].role !== "user") {
+    throw new AppError("الرسالة مطلوبة", 400);
   }
 
   const { summary } = await homeService.getHomeSummary(volunteerId);
@@ -93,31 +99,35 @@ async function sendMessage(volunteerId, rawMessages) {
 
   try {
     response = await fetch(GROQ_URL, {
-      method: 'POST',
+      method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
-        messages: [{ role: 'system', content: buildSystemPrompt(summary) }, ...history],
-        max_tokens: 500,
+        model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+        messages: [
+          { role: "system", content: buildSystemPrompt(summary) },
+          ...history,
+        ],
+        max_completion_tokens: 1500,
+        reasoning_effort: "low",
         temperature: 0.7,
       }),
       signal: AbortSignal.timeout(20000),
     });
   } catch (error) {
-    console.error('[chatbot] request failed:', error.message);
-    throw new AppError('المساعد مش متاح دلوقتي، حاول بعد شوية', 502);
+    console.error("[chatbot] request failed:", error.message);
+    throw new AppError("المساعد مش متاح دلوقتي، حاول بعد شوية", 502);
   }
 
   if (!response.ok) {
-    const details = await response.text().catch(() => '');
-    console.error('[chatbot] groq error:', response.status, details);
+    const details = await response.text().catch(() => "");
+    console.error("[chatbot] groq error:", response.status, details);
     throw new AppError(
       response.status === 429
-        ? 'المساعد عليه ضغط دلوقتي، حاول بعد شوية'
-        : 'المساعد مش متاح دلوقتي، حاول بعد شوية',
+        ? "المساعد عليه ضغط دلوقتي، حاول بعد شوية"
+        : "المساعد مش متاح دلوقتي، حاول بعد شوية",
       response.status === 429 ? 429 : 502,
     );
   }
@@ -126,7 +136,7 @@ async function sendMessage(volunteerId, rawMessages) {
   const reply = data?.choices?.[0]?.message?.content?.trim();
 
   if (!reply) {
-    throw new AppError('المساعد مرجّعش رد، حاول مرة أخرى', 502);
+    throw new AppError("المساعد مرجّعش رد، حاول مرة أخرى", 502);
   }
 
   return reply;
