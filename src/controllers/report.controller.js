@@ -2,7 +2,7 @@ const reportService = require('../services/report.service');
 const asyncHandler = require('../utils/async-handler');
 
 const listReports = asyncHandler(async (req, res) => {
-  const result = await reportService.listReports(req.query, req.user.id);
+  const result = await reportService.listReports(req.query, req.user);
 
   res.status(200).json({
     success: true,
@@ -13,7 +13,7 @@ const listReports = asyncHandler(async (req, res) => {
 const getReportById = asyncHandler(async (req, res) => {
   const result = await reportService.getReportById(
     req.params.reportId,
-    req.user.id,
+    req.user,
   );
 
   res.status(200).json({
@@ -44,9 +44,43 @@ const updateReport = asyncHandler(async (req, res) => {
   });
 });
 
+const listPendingReviewReports = asyncHandler(async (req, res) => {
+  const result = await reportService.listPendingReviewReports(req.query, req.user);
+  res.status(200).json({ success: true, ...result });
+});
+
+const approveReport = asyncHandler(async (req, res) => {
+  const result = await reportService.reviewReport(
+    req.params.reportId,
+    'APPROVED',
+    req.body,
+    req.user,
+  );
+  res.status(200).json({ success: true, ...result });
+});
+
+const rejectReport = asyncHandler(async (req, res) => {
+  const result = await reportService.reviewReport(
+    req.params.reportId,
+    'REJECTED',
+    req.body,
+    req.user,
+  );
+  res.status(200).json({ success: true, ...result });
+});
+
+const getReviewHistory = asyncHandler(async (req, res) => {
+  const result = await reportService.getReviewHistory(req.params.reportId, req.user);
+  res.status(200).json({ success: true, ...result });
+});
+
 module.exports = {
+  approveReport,
   createReport,
+  getReviewHistory,
   getReportById,
+  listPendingReviewReports,
   listReports,
+  rejectReport,
   updateReport,
 };

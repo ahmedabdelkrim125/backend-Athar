@@ -1,20 +1,20 @@
 const express = require('express');
 
 const taskController = require('../controllers/task.controller');
-const { requireAuth } = require('../middleware/auth.middleware');
+const { requireAccountAuth } = require('../middleware/account-auth.middleware');
+const { requireAdminAuth } = require('../middleware/admin-auth.middleware');
 
 const router = express.Router();
 
-router.use(requireAuth);
-
-router.get('/', taskController.listTasks);
-router.post('/', taskController.createTask);
-router.get('/:taskId', taskController.getTaskById);
-router.patch('/:taskId', taskController.updateTask);
-router.get('/:taskId/assignments', taskController.listTaskAssignments);
-router.post('/:taskId/assignments', taskController.assignVolunteerToTask);
+router.get('/', requireAccountAuth, taskController.listTasks);
+router.post('/', requireAdminAuth, taskController.createTask);
+router.get('/:taskId', requireAccountAuth, taskController.getTaskById);
+router.patch('/:taskId', requireAdminAuth, taskController.updateTask);
+router.get('/:taskId/assignments', requireAdminAuth, taskController.listTaskAssignments);
+router.post('/:taskId/assignments', requireAdminAuth, taskController.assignVolunteerToTask);
 router.patch(
   '/:taskId/assignments/:volunteerId',
+  requireAdminAuth,
   taskController.updateTaskAssignment,
 );
 

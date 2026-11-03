@@ -14,6 +14,9 @@ const {
   validateCampaignUpdatePayload,
 } = require('../validators/resource.validators');
 const { resolveLocationInput } = require('./location.service');
+const { canCreateCampaign, canManageCampaignById } = require('../middleware/rbac.middleware');
+const { writeAuditLog } = require('./audit.service');
+const notificationService = require('./notification.service');
 
 const volunteerSummarySelect = {
   id: true,
@@ -29,6 +32,9 @@ const campaignInclude = {
   location: true,
   createdBy: {
     select: volunteerSummarySelect,
+  },
+  createdByAdmin: {
+    select: { id: true, fullName: true, email: true },
   },
   _count: {
     select: {
@@ -94,7 +100,16 @@ function serializeCampaign(campaign, options = {}) {
     endTime: formatTimeOnly(campaign.endTime),
     status: campaign.status,
     location,
-    createdBy: serializeVolunteerSummary(campaign.createdBy),
+    createdBy: campaign.createdBy
+      ? serializeVolunteerSummary(campaign.createdBy)
+      : campaign.createdByAdmin
+        ? {
+            id: campaign.createdByAdmin.id,
+            fullName: campaign.createdByAdmin.fullName,
+            email: campaign.createdByAdmin.email,
+            role: 'ADMIN',
+          }
+        : null,
     attendance: {
       radiusMeters: campaign.attendanceRadiusMeters,
       pointsOnCheckIn: campaign.attendancePoints,
@@ -129,13 +144,13 @@ async function getCampaignOrThrow(campaignId) {
   return campaign;
 }
 
-function ensureCampaignOwner(campaign, volunteerId) {
-  if (campaign.createdById !== volunteerId) {
+async function ensureCampaignOwner(campaign, actor) {
+  if (!(await canManageCampaignById(actor, campaign))) {
     throw new AppError('غير مسموح لك بإدارة هذه الحملة', 403);
   }
 }
 
-async function listCampaigns(query, volunteerId) {
+async function listCampaigns(query, actor) {
   const filters = validateCampaignListQuery(query);
   const where = {};
 
@@ -152,7 +167,8 @@ async function listCampaigns(query, volunteerId) {
   }
 
   if (query.mine === 'true') {
-    where.createdById = volunteerId;
+    if (actor.accountType === 'ADMIN') where.createdByAdminId = actor.id;
+    else where.createdById = actor.id;
   }
 
   const [campaigns, total] = await Promise.all([
@@ -176,7 +192,7 @@ async function listCampaigns(query, volunteerId) {
   };
 }
 
-async function getCampaignById(campaignId, volunteerId, query = {}) {
+async function getCampaignById(campaignId, actor, query = {}) {
   const parsedCampaignId = parsePositiveInteger(campaignId, 'معرف الحملة');
   const viewerCoordinates = parseCoordinatesQuery(query);
   const campaign = await getCampaignOrThrow(parsedCampaignId);
@@ -200,7 +216,7 @@ async function getCampaignById(campaignId, volunteerId, query = {}) {
         location: true,
         volunteerTasks: {
           where: {
-            volunteerId,
+            volunteerId: actor.accountType === 'ADMIN' ? -1 : actor.id,
           },
         },
       },
@@ -215,7 +231,7 @@ async function getCampaignById(campaignId, volunteerId, query = {}) {
   return {
     message: 'تم جلب بيانات الحملة بنجاح',
     campaign: serializeCampaign(campaign, {
-      currentVolunteerId: volunteerId,
+      currentVolunteerId: actor.accountType === 'ADMIN' ? null : actor.id,
       nextTask,
       registeredVolunteers: registeredVolunteers.length,
       viewerCoordinates,
@@ -223,7 +239,10 @@ async function getCampaignById(campaignId, volunteerId, query = {}) {
   };
 }
 
-async function createCampaign(payload, volunteerId) {
+async function createCampaign(payload, actor) {
+  if (!(await canCreateCampaign(actor))) {
+    throw new AppError('إنشاء الحملات متاح للأدمن فقط', 403);
+  }
   const validatedPayload = validateCampaignCreatePayload(payload);
 
   const campaign = await prisma.$transaction(async (transactionClient) => {
@@ -243,7 +262,9 @@ async function createCampaign(payload, volunteerId) {
         attendancePoints: validatedPayload.attendancePoints,
         reportPoints: validatedPayload.reportPoints,
         locationId,
-        createdById: volunteerId,
+        ...(actor.accountType === 'ADMIN'
+          ? { createdByAdminId: actor.id }
+          : { createdById: actor.id }),
       },
       include: campaignInclude,
     });
@@ -255,12 +276,12 @@ async function createCampaign(payload, volunteerId) {
   };
 }
 
-async function updateCampaign(campaignId, payload, volunteerId) {
+async function updateCampaign(campaignId, payload, actor) {
   const parsedCampaignId = parsePositiveInteger(campaignId, 'معرف الحملة');
   const validatedPayload = validateCampaignUpdatePayload(payload);
   const existingCampaign = await getCampaignOrThrow(parsedCampaignId);
 
-  ensureCampaignOwner(existingCampaign, volunteerId);
+  await ensureCampaignOwner(existingCampaign, actor);
 
   if (Object.keys(validatedPayload).length === 0) {
     throw new AppError('لا توجد بيانات صالحة للتحديث', 400);
@@ -281,7 +302,7 @@ async function updateCampaign(campaignId, payload, volunteerId) {
     throw new AppError('وقت بداية الحملة يجب أن يكون قبل وقت النهاية', 400);
   }
 
-  const campaign = await prisma.$transaction(async (transactionClient) => {
+  const result = await prisma.$transaction(async (transactionClient) => {
     const data = {
       title: validatedPayload.title,
       description: validatedPayload.description,
@@ -300,7 +321,7 @@ async function updateCampaign(campaignId, payload, volunteerId) {
       data.locationId = await resolveLocationInput(transactionClient, validatedPayload);
     }
 
-    return transactionClient.campaign.update({
+    const updatedCampaign = await transactionClient.campaign.update({
       where: {
         id: parsedCampaignId,
       },
@@ -309,11 +330,92 @@ async function updateCampaign(campaignId, payload, volunteerId) {
       ),
       include: campaignInclude,
     });
+    const notifications = [];
+    if (validatedPayload.status && validatedPayload.status !== existingCampaign.status) {
+      await writeAuditLog(
+        {
+          ...(actor.accountType === 'ADMIN'
+            ? { adminId: actor.id }
+            : { actorId: actor.id }),
+          action: 'CAMPAIGN_STATUS_CHANGED',
+          targetType: 'CAMPAIGN',
+          targetId: parsedCampaignId,
+          data: { from: existingCampaign.status, to: validatedPayload.status },
+        },
+        transactionClient,
+      );
+    }
+    if (validatedPayload.status === 'CANCELLED' && existingCampaign.status !== 'CANCELLED') {
+      const tasks = await transactionClient.task.findMany({
+        where: {
+          campaignId: parsedCampaignId,
+          status: { notIn: ['CANCELLED', 'COMPLETED'] },
+        },
+        select: {
+          id: true,
+          title: true,
+          missionJoinRequests: {
+            where: { status: { in: ['PENDING', 'APPROVED'] } },
+            select: { volunteerId: true },
+          },
+          volunteerTasks: {
+            where: { status: { in: ['ASSIGNED', 'CHECKED_IN', 'CHECKED_OUT'] } },
+            select: { volunteerId: true },
+          },
+        },
+      });
+      const taskIds = tasks.map((task) => task.id);
+      if (taskIds.length > 0) {
+        await transactionClient.task.updateMany({
+          where: { id: { in: taskIds } },
+          data: { status: 'CANCELLED', approvalStatus: 'CANCELLED' },
+        });
+        await transactionClient.missionJoinRequest.updateMany({
+          where: { taskId: { in: taskIds }, status: { in: ['PENDING', 'APPROVED'] } },
+          data: { status: 'CANCELLED', decidedAt: new Date() },
+        });
+        await transactionClient.volunteerTask.updateMany({
+          where: {
+            taskId: { in: taskIds },
+            status: { in: ['ASSIGNED', 'CHECKED_IN', 'CHECKED_OUT'] },
+          },
+          data: { status: 'CANCELLED' },
+        });
+        for (const task of tasks) {
+          const recipients = new Set([
+            ...task.missionJoinRequests.map((request) => request.volunteerId),
+            ...task.volunteerTasks.map((assignment) => assignment.volunteerId),
+          ]);
+          for (const userId of recipients) {
+            const notification = await notificationService.createInAppNotification(
+              {
+                userId,
+                title: 'تم إلغاء الحملة',
+                body: `تم إلغاء الحملة "${existingCampaign.title}" والمهمة "${task.title}".`,
+                type: notificationService.NOTIFICATION_TYPES.MISSION_CANCELLED,
+                eventKey: `campaign-cancelled:${parsedCampaignId}:task:${task.id}`,
+                data: {
+                  campaignId: parsedCampaignId,
+                  taskId: task.id,
+                  status: 'CANCELLED',
+                },
+              },
+              transactionClient,
+            );
+            if (notification) notifications.push(notification);
+          }
+        }
+      }
+    }
+    return { campaign: updatedCampaign, notifications };
   });
+  for (const notification of result.notifications) {
+    await notificationService.sendNotificationPush(notification);
+  }
 
   return {
     message: 'تم تحديث الحملة بنجاح',
-    campaign: serializeCampaign(campaign),
+    campaign: serializeCampaign(result.campaign),
   };
 }
 

@@ -2,6 +2,8 @@ const prisma = require('../lib/prisma');
 const AppError = require('../utils/app-error');
 const { serializeVolunteerSummary, serializeLocation } = require('../utils/serializers');
 const { serializeAnnouncement } = require('./announcement.service');
+const nearbyMissionService = require('./nearby-mission.service');
+const { parseCoordinatesQuery } = require('../validators/resource.validators');
 
 function formatDateOnly(value) {
   return value ? new Date(value).toISOString().slice(0, 10) : null;
@@ -43,7 +45,7 @@ function serializeHomeTask(task) {
   };
 }
 
-async function getHomeSummary(volunteerId) {
+async function getHomeSummary(volunteerId, query = {}) {
   const volunteer = await prisma.volunteer.findUnique({
     where: {
       id: volunteerId,
@@ -66,7 +68,8 @@ async function getHomeSummary(volunteerId) {
   const todayDateString = new Date().toISOString().slice(0, 10);
   const todayDate = new Date(`${todayDateString}T00:00:00.000Z`);
 
-  const [announcements, upcomingTasks] = await Promise.all([
+  const coordinates = parseCoordinatesQuery(query);
+  const [announcements, upcomingTasks, nearbyResult] = await Promise.all([
     prisma.announcement.findMany({
       orderBy: [
         { isPinned: 'desc' },
@@ -76,8 +79,12 @@ async function getHomeSummary(volunteerId) {
     }),
     prisma.task.findMany({
       where: {
+        approvalStatus: 'APPROVED',
         date: {
           gte: todayDate,
+        },
+        campaign: {
+          status: { in: ['PUBLISHED', 'ACTIVE'] },
         },
         volunteerTasks: {
           some: {
@@ -111,6 +118,18 @@ async function getHomeSummary(volunteerId) {
       ],
       take: 5,
     }),
+    coordinates
+      ? nearbyMissionService.getNearbyMissions(
+          {
+            ...coordinates,
+            radiusMeters: query.radiusMeters,
+            accuracyMeters: query.accuracyMeters,
+            page: 1,
+            limit: 5,
+          },
+          volunteerId,
+        )
+      : Promise.resolve(null),
   ]);
 
   const todayTasks = upcomingTasks.filter(
@@ -136,6 +155,12 @@ async function getHomeSummary(volunteerId) {
       announcements: announcements.map(serializeAnnouncement),
       todayTasks: todayTasks.map(serializeHomeTask),
       upcomingTasks: upcomingTasks.map(serializeHomeTask),
+      nearbyMissions: nearbyResult
+        ? {
+            pagination: nearbyResult.pagination,
+            missions: nearbyResult.missions,
+          }
+        : null,
     },
   };
 }

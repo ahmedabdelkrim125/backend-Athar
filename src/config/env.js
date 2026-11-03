@@ -103,5 +103,9 @@ module.exports = {
     normalizeEnvValue(process.env.JWT_SECRET) ||
     'change-this-secret',
   jwtRefreshExpiresIn: normalizeEnvValue(process.env.JWT_REFRESH_EXPIRES_IN) || '30d',
+  adminJwtSecret: normalizeEnvValue(process.env.ADMIN_JWT_SECRET),
+  adminJwtRefreshSecret: normalizeEnvValue(process.env.ADMIN_JWT_REFRESH_SECRET),
+  adminJwtAccessExpiresIn: normalizeEnvValue(process.env.ADMIN_JWT_ACCESS_EXPIRES_IN) || '15m',
+  adminJwtRefreshExpiresIn: normalizeEnvValue(process.env.ADMIN_JWT_REFRESH_EXPIRES_IN) || '12h',
   rootDir,
 };

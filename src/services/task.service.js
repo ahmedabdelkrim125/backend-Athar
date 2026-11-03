@@ -7,6 +7,8 @@ const {
   serializeVolunteerSummary,
 } = require('../utils/serializers');
 const { getTaskAttendanceRadius } = require('../utils/task-metrics');
+const { assertManualAssignmentUpdateAllowed } = require('../utils/mission-checkin');
+const { canManageCampaignById } = require('../middleware/rbac.middleware');
 const {
   parsePositiveInteger,
   validateTaskAssignmentCreatePayload,
@@ -17,6 +19,8 @@ const {
 } = require('../validators/resource.validators');
 const { resolveLocationInput } = require('./location.service');
 const { syncTaskStatusFromAssignments } = require('./task-assignment.service');
+const notificationService = require('./notification.service');
+const { NOTIFICATION_TYPES } = notificationService;
 
 const volunteerSummarySelect = {
   id: true,
@@ -122,6 +126,8 @@ function serializeTask(task, options = {}) {
     startTime: formatTimeOnly(task.startTime),
     endTime: formatTimeOnly(task.endTime),
     status: task.status,
+    approvalStatus: task.approvalStatus,
+    requiredVolunteers: task.requiredVolunteers,
     campaign: task.campaign
       ? {
           id: task.campaign.id,
@@ -146,9 +152,7 @@ function serializeTask(task, options = {}) {
       pointsOnReport: task.campaign?.reportPoints ?? 0,
       distanceMeters: distance.distanceMeters,
       isWithinRange: distance.isWithinRange,
-      canCheckIn: myAssignment
-        ? ['ASSIGNED', 'CHECKED_OUT'].includes(myAssignment.status)
-        : false,
+      canCheckIn: myAssignment ? myAssignment.status === 'ASSIGNED' : false,
       canSubmitReport: myAssignment
         ? ['CHECKED_IN', 'CHECKED_OUT', 'COMPLETED'].includes(myAssignment.status)
         : false,
@@ -158,8 +162,8 @@ function serializeTask(task, options = {}) {
   };
 }
 
-function ensureTaskOwner(task, volunteerId) {
-  if (task.campaign.createdById !== volunteerId) {
+async function ensureTaskOwner(task, actor) {
+  if (!(await canManageCampaignById(actor, task.campaign))) {
     throw new AppError('غير مسموح لك بإدارة هذه المهمة', 403);
   }
 }
@@ -179,7 +183,7 @@ async function getTaskOrThrow(taskId, options = {}) {
   return task;
 }
 
-async function getCampaignForTaskManagement(campaignId, volunteerId) {
+async function getCampaignForTaskManagement(campaignId, actor) {
   const campaign = await prisma.campaign.findUnique({
     where: {
       id: campaignId,
@@ -191,6 +195,7 @@ async function getCampaignForTaskManagement(campaignId, volunteerId) {
       endDate: true,
       locationId: true,
       createdById: true,
+      createdByAdminId: true,
     },
   });
 
@@ -198,7 +203,7 @@ async function getCampaignForTaskManagement(campaignId, volunteerId) {
     throw new AppError('الحملة غير موجودة', 404);
   }
 
-  if (campaign.createdById !== volunteerId) {
+  if (!(await canManageCampaignById(actor, campaign))) {
     throw new AppError('غير مسموح لك بإدارة مهام هذه الحملة', 403);
   }
 
@@ -214,7 +219,8 @@ function ensureTaskDateWithinCampaign(taskDate, campaign) {
   }
 }
 
-async function listTasks(query, volunteerId) {
+async function listTasks(query, actor) {
+  const volunteerId = actor.accountType === 'ADMIN' ? -1 : actor.id;
   const filters = validateTaskListQuery(query);
   const where = {};
 
@@ -259,7 +265,7 @@ async function listTasks(query, volunteerId) {
     prisma.task.findMany({
       where,
       include: buildTaskInclude({
-        currentVolunteerId: volunteerId,
+        currentVolunteerId: actor.accountType === 'ADMIN' ? null : volunteerId,
       }),
       orderBy: [
         { date: 'asc' },
@@ -276,39 +282,40 @@ async function listTasks(query, volunteerId) {
     pagination: serializePagination(filters.page, filters.limit, total),
     tasks: tasks.map((task) =>
       serializeTask(task, {
-        currentVolunteerId: volunteerId,
+        currentVolunteerId: actor.accountType === 'ADMIN' ? null : volunteerId,
         viewerCoordinates: filters.coordinates,
       }),
     ),
   };
 }
 
-async function getTaskById(taskId, volunteerId, query = {}) {
+async function getTaskById(taskId, actor, query = {}) {
+  const volunteerId = actor.accountType === 'ADMIN' ? -1 : actor.id;
   const parsedTaskId = parsePositiveInteger(taskId, 'معرف المهمة');
   const filters = validateTaskListQuery({
     latitude: query.latitude,
     longitude: query.longitude,
   });
   const task = await getTaskOrThrow(parsedTaskId, {
-    currentVolunteerId: volunteerId,
+    currentVolunteerId: actor.accountType === 'ADMIN' ? null : volunteerId,
     includeAssignments: true,
   });
 
   return {
     message: 'تم جلب بيانات المهمة بنجاح',
     task: serializeTask(task, {
-      currentVolunteerId: volunteerId,
+      currentVolunteerId: actor.accountType === 'ADMIN' ? null : volunteerId,
       includeAssignments: true,
       viewerCoordinates: filters.coordinates,
     }),
   };
 }
 
-async function createTask(payload, volunteerId) {
+async function createTask(payload, actor) {
   const validatedPayload = validateTaskCreatePayload(payload);
   const campaign = await getCampaignForTaskManagement(
     validatedPayload.campaignId,
-    volunteerId,
+    actor,
   );
 
   ensureTaskDateWithinCampaign(validatedPayload.date, campaign);
@@ -329,10 +336,12 @@ async function createTask(payload, volunteerId) {
         endTime: validatedPayload.endTime,
         attendanceRadiusMeters: validatedPayload.attendanceRadiusMeters,
         status: validatedPayload.status,
+        approvalStatus: 'PENDING_APPROVAL',
+        requiredVolunteers: validatedPayload.requiredVolunteers,
         locationId,
       },
       include: buildTaskInclude({
-        currentVolunteerId: volunteerId,
+        currentVolunteerId: actor.accountType === 'ADMIN' ? -1 : actor.id,
       }),
     });
   });
@@ -340,25 +349,25 @@ async function createTask(payload, volunteerId) {
   return {
     message: 'تم إنشاء المهمة بنجاح',
     task: serializeTask(task, {
-      currentVolunteerId: volunteerId,
+      currentVolunteerId: actor.accountType === 'ADMIN' ? null : actor.id,
     }),
   };
 }
 
-async function updateTask(taskId, payload, volunteerId) {
+async function updateTask(taskId, payload, actor) {
   const parsedTaskId = parsePositiveInteger(taskId, 'معرف المهمة');
   const validatedPayload = validateTaskUpdatePayload(payload);
   const existingTask = await getTaskOrThrow(parsedTaskId, {
-    currentVolunteerId: volunteerId,
+    currentVolunteerId: actor.accountType === 'ADMIN' ? -1 : actor.id,
   });
 
-  ensureTaskOwner(existingTask, volunteerId);
+  await ensureTaskOwner(existingTask, actor);
 
   if (Object.keys(validatedPayload).length === 0) {
     throw new AppError('لا توجد بيانات صالحة للتحديث', 400);
   }
 
-  const campaign = await getCampaignForTaskManagement(existingTask.campaignId, volunteerId);
+  const campaign = await getCampaignForTaskManagement(existingTask.campaignId, actor);
   const nextTaskDate = validatedPayload.date || existingTask.date;
 
   ensureTaskDateWithinCampaign(nextTaskDate, campaign);
@@ -380,6 +389,7 @@ async function updateTask(taskId, payload, volunteerId) {
       startTime: validatedPayload.startTime,
       endTime: validatedPayload.endTime,
       attendanceRadiusMeters: validatedPayload.attendanceRadiusMeters,
+      requiredVolunteers: validatedPayload.requiredVolunteers,
       status: validatedPayload.status,
     };
 
@@ -395,7 +405,7 @@ async function updateTask(taskId, payload, volunteerId) {
         Object.entries(data).filter(([, value]) => value !== undefined),
       ),
       include: buildTaskInclude({
-        currentVolunteerId: volunteerId,
+        currentVolunteerId: actor.accountType === 'ADMIN' ? -1 : actor.id,
       }),
     });
   });
@@ -403,18 +413,18 @@ async function updateTask(taskId, payload, volunteerId) {
   return {
     message: 'تم تحديث المهمة بنجاح',
     task: serializeTask(task, {
-      currentVolunteerId: volunteerId,
+      currentVolunteerId: actor.accountType === 'ADMIN' ? null : actor.id,
     }),
   };
 }
 
-async function listTaskAssignments(taskId, volunteerId) {
+async function listTaskAssignments(taskId, actor) {
   const parsedTaskId = parsePositiveInteger(taskId, 'معرف المهمة');
   const task = await getTaskOrThrow(parsedTaskId, {
     includeAssignments: true,
   });
 
-  ensureTaskOwner(task, volunteerId);
+  await ensureTaskOwner(task, actor);
 
   return {
     message: 'تم جلب إسنادات المهمة بنجاح',
@@ -422,12 +432,12 @@ async function listTaskAssignments(taskId, volunteerId) {
   };
 }
 
-async function assignVolunteerToTask(taskId, payload, volunteerId) {
+async function assignVolunteerToTask(taskId, payload, actor) {
   const parsedTaskId = parsePositiveInteger(taskId, 'معرف المهمة');
   const validatedPayload = validateTaskAssignmentCreatePayload(payload);
   const task = await getTaskOrThrow(parsedTaskId);
 
-  ensureTaskOwner(task, volunteerId);
+  await ensureTaskOwner(task, actor);
 
   const volunteer = await prisma.volunteer.findUnique({
     where: {
@@ -453,32 +463,106 @@ async function assignVolunteerToTask(taskId, payload, volunteerId) {
     throw new AppError('هذا المتطوع مسند بالفعل إلى المهمة', 409);
   }
 
-  const assignment = await prisma.$transaction(async (transactionClient) => {
-    const createdAssignment = await transactionClient.volunteerTask.create({
-      data: {
-        volunteerId: validatedPayload.volunteerId,
-        taskId: parsedTaskId,
-        status: validatedPayload.status,
-      },
-      include: {
-        volunteer: {
-          select: volunteerSummarySelect,
+  let result;
+  try {
+    result = await prisma.$transaction(async (transactionClient) => {
+      await transactionClient.$queryRaw`SELECT id FROM tasks WHERE id = ${parsedTaskId} FOR UPDATE`;
+      const currentTask = await transactionClient.task.findUnique({
+        where: { id: parsedTaskId },
+        select: {
+          status: true,
+          approvalStatus: true,
+          requiredVolunteers: true,
+          campaign: { select: { status: true } },
         },
-      },
+      });
+      if (!currentTask || ['CANCELLED', 'COMPLETED'].includes(currentTask.status)) {
+        throw new AppError('لا يمكن الإسناد إلى مهمة منتهية أو ملغاة', 409);
+      }
+      if (
+        currentTask.approvalStatus !== 'APPROVED' ||
+        !['PUBLISHED', 'ACTIVE'].includes(currentTask.campaign.status)
+      ) {
+        throw new AppError('اعتمد المهمة وانشر الحملة قبل الإسناد', 409);
+      }
+      if (currentTask.requiredVolunteers !== null) {
+        const [participants, pendingRequests] = await Promise.all([
+          transactionClient.volunteerTask.count({
+            where: { taskId: parsedTaskId, status: { not: 'CANCELLED' } },
+          }),
+          transactionClient.missionJoinRequest.count({
+            where: { taskId: parsedTaskId, status: 'PENDING' },
+          }),
+        ]);
+        if (participants + pendingRequests >= currentTask.requiredVolunteers) {
+          throw new AppError('اكتمل عدد الأماكن المتاحة للمهمة', 409);
+        }
+      }
+
+      const createdAssignment = await transactionClient.volunteerTask.create({
+        data: {
+          volunteerId: validatedPayload.volunteerId,
+          taskId: parsedTaskId,
+          status: validatedPayload.status,
+        },
+        include: {
+          volunteer: {
+            select: volunteerSummarySelect,
+          },
+        },
+      });
+
+      await transactionClient.missionJoinRequest.upsert({
+        where: {
+          volunteerId_taskId: {
+            volunteerId: validatedPayload.volunteerId,
+            taskId: parsedTaskId,
+          },
+        },
+        create: {
+          volunteerId: validatedPayload.volunteerId,
+          taskId: parsedTaskId,
+          status: 'APPROVED',
+          decidedAt: new Date(),
+        },
+        update: {
+          status: 'APPROVED',
+          decidedAt: new Date(),
+        },
+      });
+      await syncTaskStatusFromAssignments(transactionClient, parsedTaskId);
+      const notification = await notificationService.createInAppNotification(
+        {
+          userId: validatedPayload.volunteerId,
+          title: 'تم قبول طلب الانضمام',
+          body: 'تم إسنادك إلى المهمة ويمكنك الآن الاطلاع على تفاصيلها.',
+          type: NOTIFICATION_TYPES.MISSION_JOIN_APPROVED,
+          eventKey: `mission-assigned:${createdAssignment.id}`,
+          data: {
+            taskId: parsedTaskId,
+            deepLink: `athar://missions/${parsedTaskId}`,
+          },
+        },
+        transactionClient,
+      );
+      return { assignment: createdAssignment, notification };
     });
+  } catch (error) {
+    if (error?.code === 'P2002') {
+      throw new AppError('هذا المتطوع مسند بالفعل إلى المهمة', 409);
+    }
+    throw error;
+  }
 
-    await syncTaskStatusFromAssignments(transactionClient, parsedTaskId);
-
-    return createdAssignment;
-  });
+  await notificationService.sendNotificationPush(result.notification);
 
   return {
     message: 'تم إسناد المتطوع إلى المهمة بنجاح',
-    assignment: serializeAssignment(assignment),
+    assignment: serializeAssignment(result.assignment),
   };
 }
 
-async function updateTaskAssignment(taskId, assignmentVolunteerId, payload, currentVolunteerId) {
+async function updateTaskAssignment(taskId, assignmentVolunteerId, payload, actor) {
   const parsedTaskId = parsePositiveInteger(taskId, 'معرف المهمة');
   const parsedVolunteerId = parsePositiveInteger(assignmentVolunteerId, 'معرف المتطوع');
   const validatedPayload = validateTaskAssignmentUpdatePayload(payload);
@@ -510,35 +594,46 @@ async function updateTaskAssignment(taskId, assignmentVolunteerId, payload, curr
     throw new AppError('إسناد المهمة غير موجود', 404);
   }
 
-  const isTaskOwner = assignment.task.campaign.createdById === currentVolunteerId;
-  const isAssignedVolunteer = assignment.volunteerId === currentVolunteerId;
+  const isTaskOwner = actor.accountType === 'ADMIN';
+  const isAssignedVolunteer = actor.accountType !== 'ADMIN' && assignment.volunteerId === actor.id;
 
   if (!isTaskOwner && !isAssignedVolunteer) {
     throw new AppError('غير مسموح لك بتحديث هذا الإسناد', 403);
   }
 
-  if (
-    assignment.status === 'COMPLETED' &&
-    validatedPayload.status &&
-    validatedPayload.status !== 'COMPLETED'
-  ) {
-    throw new AppError('لا يمكن تغيير الإسناد بعد اكتماله', 400);
-  }
-
-  const nextCheckInTime =
-    validatedPayload.checkInTime !== undefined
-      ? validatedPayload.checkInTime
-      : assignment.checkInTime;
-  const nextCheckOutTime =
-    validatedPayload.checkOutTime !== undefined
-      ? validatedPayload.checkOutTime
-      : assignment.checkOutTime;
-
-  if (nextCheckInTime && nextCheckOutTime && nextCheckInTime >= nextCheckOutTime) {
-    throw new AppError('وقت الحضور يجب أن يكون قبل وقت الانصراف', 400);
-  }
-
   const updatedAssignment = await prisma.$transaction(async (transactionClient) => {
+    await transactionClient.$queryRaw`SELECT id FROM tasks WHERE id = ${parsedTaskId} FOR UPDATE`;
+    const currentAssignment = await transactionClient.volunteerTask.findUnique({
+      where: {
+        volunteerId_taskId: {
+          volunteerId: parsedVolunteerId,
+          taskId: parsedTaskId,
+        },
+      },
+      select: {
+        status: true,
+        checkInTime: true,
+        checkOutTime: true,
+      },
+    });
+    if (!currentAssignment) throw new AppError('إسناد المهمة غير موجود', 404);
+    assertManualAssignmentUpdateAllowed(currentAssignment, validatedPayload, isTaskOwner);
+    const nextCheckInTime =
+      validatedPayload.checkInTime !== undefined
+        ? validatedPayload.checkInTime
+        : currentAssignment.checkInTime;
+    const nextCheckOutTime =
+      validatedPayload.checkOutTime !== undefined
+        ? validatedPayload.checkOutTime
+        : currentAssignment.checkOutTime;
+    if (
+      nextCheckInTime &&
+      nextCheckOutTime &&
+      nextCheckInTime >= nextCheckOutTime
+    ) {
+      throw new AppError('وقت الحضور يجب أن يكون قبل وقت الانصراف', 400);
+    }
+
     const assignmentRecord = await transactionClient.volunteerTask.update({
       where: {
         volunteerId_taskId: {

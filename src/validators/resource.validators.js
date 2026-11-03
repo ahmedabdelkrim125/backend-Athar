@@ -597,6 +597,11 @@ function validateTaskCreatePayload(payload = {}) {
       payload.attendanceRadiusMeters,
       'نطاق الحضور بالمتر',
     ),
+    requiredVolunteers: parsePositiveInteger(
+      payload.requiredVolunteers,
+      'عدد المتطوعين المطلوب',
+      { required: false },
+    ),
     status:
       parseEnumValue(payload.status, 'حالة المهمة', TASK_STATUSES, {
         required: false,
@@ -640,6 +645,13 @@ function validateTaskUpdatePayload(payload = {}) {
     );
   }
 
+  if (hasOwn(payload, 'requiredVolunteers')) {
+    data.requiredVolunteers =
+      payload.requiredVolunteers === null
+        ? null
+        : parsePositiveInteger(payload.requiredVolunteers, 'عدد المتطوعين المطلوب');
+  }
+
   if (hasOwn(payload, 'locationId') || hasOwn(payload, 'location')) {
     Object.assign(data, validateLocationReference(payload, { required: false }));
   }
@@ -667,12 +679,16 @@ function validateTaskListQuery(query = {}) {
 }
 
 function validateTaskAssignmentCreatePayload(payload = {}) {
+  const status =
+    parseEnumValue(payload.status, 'حالة إسناد المهمة', VOLUNTEER_TASK_STATUSES, {
+      required: false,
+    }) || 'ASSIGNED';
+  if (status !== 'ASSIGNED') {
+    throw new AppError('يبدأ إسناد المتطوع بحالة ASSIGNED فقط', 400);
+  }
   return {
     volunteerId: parsePositiveInteger(payload.volunteerId, 'المتطوع'),
-    status:
-      parseEnumValue(payload.status, 'حالة إسناد المهمة', VOLUNTEER_TASK_STATUSES, {
-        required: false,
-      }) || 'ASSIGNED',
+    status,
   };
 }
 

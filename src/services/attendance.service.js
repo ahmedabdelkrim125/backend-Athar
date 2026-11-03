@@ -5,6 +5,8 @@ const { syncTaskStatusFromAssignments } = require('./task-assignment.service');
 const { buildDistanceContext } = require('../utils/geolocation');
 const { serializeLocation } = require('../utils/serializers');
 const { getTaskAttendanceRadius } = require('../utils/task-metrics');
+const { assertMissionCheckInEligible } = require('../utils/mission-checkin');
+const notificationService = require('./notification.service');
 const {
   parsePositiveInteger,
   validateAttendanceCheckInPayload,
@@ -32,7 +34,12 @@ function buildAttendanceTaskInclude(currentVolunteerId) {
         endTime: true,
         attendanceRadiusMeters: true,
         attendancePoints: true,
+        status: true,
       },
+    },
+    missionJoinRequests: {
+      where: { volunteerId: currentVolunteerId },
+      select: { status: true },
     },
     volunteerTasks: {
       where: {
@@ -63,10 +70,11 @@ async function getAssignedTaskOrThrow(taskId, volunteerId) {
   return {
     task,
     assignment,
+    joinRequest: task.missionJoinRequests?.[0] || null,
   };
 }
 
-function serializeAttendancePreview(task, assignment, coordinates) {
+function serializeAttendancePreview(task, assignment, joinRequest, coordinates) {
   const radiusMeters = getTaskAttendanceRadius(task);
   const location = serializeLocation(task.location);
   const distance = buildDistanceContext(location, coordinates, radiusMeters);
@@ -94,7 +102,10 @@ function serializeAttendancePreview(task, assignment, coordinates) {
     attendance: {
       ...distance,
       pointsOnCheckIn: task.campaign.attendancePoints,
-      canCheckIn: ['ASSIGNED', 'CHECKED_OUT'].includes(assignment.status),
+      canCheckIn:
+        task.approvalStatus === 'APPROVED' &&
+        joinRequest?.status === 'APPROVED' &&
+        assignment.status === 'ASSIGNED',
       canSubmitReport: ['CHECKED_IN', 'CHECKED_OUT', 'COMPLETED'].includes(
         assignment.status,
       ),
@@ -105,40 +116,42 @@ function serializeAttendancePreview(task, assignment, coordinates) {
 async function getAttendancePreview(taskId, volunteerId, query = {}) {
   const parsedTaskId = parsePositiveInteger(taskId, 'معرف المهمة');
   const { coordinates } = validateAttendancePreviewQuery(query);
-  const { task, assignment } = await getAssignedTaskOrThrow(parsedTaskId, volunteerId);
+  const { task, assignment, joinRequest } = await getAssignedTaskOrThrow(
+    parsedTaskId,
+    volunteerId,
+  );
 
   return {
     message: 'تم التحقق من بيانات الحضور بنجاح',
-    attendance: serializeAttendancePreview(task, assignment, coordinates),
+    attendance: serializeAttendancePreview(task, assignment, joinRequest, coordinates),
   };
 }
 
 async function checkInToTask(taskId, payload, volunteerId) {
   const parsedTaskId = parsePositiveInteger(taskId, 'معرف المهمة');
   const coordinates = validateAttendanceCheckInPayload(payload);
-  const { task, assignment } = await getAssignedTaskOrThrow(parsedTaskId, volunteerId);
-  const radiusMeters = getTaskAttendanceRadius(task);
-  const location = serializeLocation(task.location);
-  const distance = buildDistanceContext(location, coordinates, radiusMeters);
-
-  if (assignment.status === 'COMPLETED') {
-    throw new AppError('تم إنهاء هذه المهمة بالفعل', 400);
-  }
-
-  if (assignment.status === 'CHECKED_IN') {
-    throw new AppError('تم تسجيل الحضور لهذه المهمة مسبقًا', 409);
-  }
-
-  if (distance.isWithinRange === false) {
-    throw new AppError('أنت خارج نطاق الحضور المسموح للمهمة', 403);
-  }
-
   const now = new Date();
-  const pointsDelta = assignment.attendancePointsAwarded
-    ? 0
-    : task.campaign.attendancePoints;
-
   const result = await prisma.$transaction(async (transactionClient) => {
+    await transactionClient.$queryRaw`SELECT id FROM tasks WHERE id = ${parsedTaskId} FOR UPDATE`;
+    const task = await transactionClient.task.findUnique({
+      where: { id: parsedTaskId },
+      include: buildAttendanceTaskInclude(volunteerId),
+    });
+    const assignment = task?.volunteerTasks?.[0] ?? null;
+    const joinRequest = task?.missionJoinRequests?.[0] ?? null;
+    if (!task) throw new AppError('المهمة غير موجودة', 404);
+    if (!assignment) throw new AppError('لا توجد مهمة مسندة لك بهذا المعرف', 403);
+    assertMissionCheckInEligible(task, assignment, joinRequest, now);
+
+    const radiusMeters = getTaskAttendanceRadius(task);
+    const location = serializeLocation(task.location);
+    const distance = buildDistanceContext(location, coordinates, radiusMeters);
+    if (distance.isWithinRange === false) {
+      throw new AppError('أنت خارج نطاق الحضور المسموح للمهمة', 403);
+    }
+    const pointsDelta = assignment.attendancePointsAwarded
+      ? 0
+      : task.campaign.attendancePoints;
     const updatedAssignment = await transactionClient.volunteerTask.update({
       where: {
         volunteerId_taskId: {
@@ -176,27 +189,50 @@ async function checkInToTask(taskId, payload, volunteerId) {
       transactionClient,
       volunteerId,
     );
+    const notification = await notificationService.createInAppNotification(
+      {
+        userId: volunteerId,
+        title: 'تم تسجيل الحضور',
+        body: `تم تسجيل حضورك لمهمة "${task.title}".`,
+        type: notificationService.NOTIFICATION_TYPES.MISSION_CHECK_IN,
+        eventKey: `mission-check-in:${parsedTaskId}:${volunteerId}`,
+        data: {
+          taskId: parsedTaskId,
+          campaignId: task.campaign.id,
+          deepLink: `athar://missions/${parsedTaskId}`,
+        },
+      },
+      transactionClient,
+    );
 
     return {
+      task,
+      location,
+      distance,
+      radiusMeters,
+      pointsDelta,
       assignment: updatedAssignment,
       volunteer: updatedVolunteer,
       newlyAwardedBadges,
+      notification,
     };
   });
+
+  await notificationService.sendNotificationPush(result.notification);
 
   return {
     message: 'تم تسجيل الحضور بنجاح',
     attendance: {
-      taskId: task.id,
-      campaignId: task.campaign.id,
+      taskId: result.task.id,
+      campaignId: result.task.campaign.id,
       checkedInAt: result.assignment.checkInTime?.toISOString() ?? now.toISOString(),
-      location,
-      distanceMeters: distance.distanceMeters,
-      radiusMeters,
+      location: result.location,
+      distanceMeters: result.distance.distanceMeters,
+      radiusMeters: result.radiusMeters,
       status: result.assignment.status,
     },
     summary: {
-      pointsAwarded: pointsDelta,
+      pointsAwarded: result.pointsDelta,
       totalPoints: result.volunteer.points,
       totalHours: result.volunteer.totalHours,
       newlyAwardedBadges: result.newlyAwardedBadges,

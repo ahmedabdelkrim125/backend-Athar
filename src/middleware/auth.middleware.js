@@ -32,7 +32,7 @@ async function requireAuth(req, res, next) {
       throw new AppError('هذا الحساب غير مسموح له بالدخول حاليًا', 403);
     }
 
-    req.user = volunteer;
+    req.user = { ...volunteer, accountType: 'VOLUNTEER' };
     next();
   } catch (error) {
     next(error);

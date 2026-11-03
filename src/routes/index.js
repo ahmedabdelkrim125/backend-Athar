@@ -7,14 +7,20 @@ const {
   verifyDatabaseSchema,
 } = require('../utils/database-readiness');
 const authRoutes = require('./auth.routes');
+const adminAuthRoutes = require('./admin-auth.routes');
 const announcementRoutes = require('./announcement.routes');
 const attendanceRoutes = require('./attendance.routes');
+const adminRoutes = require('./admin.routes');
 const campaignRoutes = require('./campaign.routes');
 const chatbotRoutes = require('./chatbot.routes');
 const communityRoutes = require('./community.routes');
+const cronRoutes = require('./cron.routes');
 const demoAdminRoutes = require('./demo-admin.routes');
+const emergencyRoutes = require('./emergency.routes');
 const homeRoutes = require('./home.routes');
+const locationRoutes = require('./location.routes');
 const missionRoutes = require('./mission.routes');
+const notificationRoutes = require('./notification.routes');
 const profileRoutes = require('./profile.routes');
 const reportRoutes = require('./report.routes');
 const sosRequestRoutes = require('./sos-request.routes');
@@ -74,10 +80,15 @@ router.get('/health', async (req, res) => {
 });
 
 router.use('/auth', authRoutes);
+router.use('/admin-auth', adminAuthRoutes);
 router.use('/home', homeRoutes);
 router.use('/profile', profileRoutes);
 router.use('/announcements', announcementRoutes);
 router.use('/attendance', attendanceRoutes);
+router.use('/admin', adminRoutes);
+router.use('/cron', cronRoutes);
+router.use('/emergency', emergencyRoutes);
+router.use('/location', locationRoutes);
 router.use('/campaigns', campaignRoutes);
 router.use('/tasks', taskRoutes);
 router.use('/reports', reportRoutes);
@@ -85,6 +96,7 @@ router.use('/sos-requests', sosRequestRoutes);
 router.use('/community', communityRoutes);
 router.use('/chatbot', chatbotRoutes);
 router.use('/missions', missionRoutes);
+router.use('/notifications', notificationRoutes);
 router.use('/uploads', uploadRoutes);
 router.use('/demo-admin', demoAdminRoutes);
 

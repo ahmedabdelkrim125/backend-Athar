@@ -1,4 +1,5 @@
 const sosRequestService = require('../services/sos-request.service');
+const emergencyService = require('../services/emergency.service');
 const asyncHandler = require('../utils/async-handler');
 
 const listSosRequests = asyncHandler(async (req, res) => {
@@ -29,7 +30,7 @@ const getActiveSosRequest = asyncHandler(async (req, res) => {
 });
 
 const getSosRequestById = asyncHandler(async (req, res) => {
-  const result = await sosRequestService.getSosRequestById(req.params.requestId);
+  const result = await sosRequestService.getSosRequestById(req.params.requestId, req.user);
 
   res.status(200).json({
     success: true,
@@ -38,12 +39,38 @@ const getSosRequestById = asyncHandler(async (req, res) => {
 });
 
 const createSosRequest = asyncHandler(async (req, res) => {
-  const result = await sosRequestService.createSosRequest(req.body, req.user.id);
-  const { statusCode, ...response } = result;
-
-  res.status(statusCode || 201).json({
+  const { incident } = await emergencyService.createLegacyIncident(req.user.id, req.body);
+  const location = {
+    latitude: incident.latitude,
+    longitude: incident.longitude,
+  };
+  res.status(201).json({
     success: true,
-    ...response,
+    message: 'تم إنشاء طلب الاستغاثة بنجاح',
+    request: {
+      id: incident.id,
+      volunteerId: req.user.id,
+      latitude: incident.latitude,
+      longitude: incident.longitude,
+      location,
+      status: incident.status,
+      statusLabel: 'قيد الإرسال',
+      isActive: true,
+      createdAt: incident.createdAt,
+      resolvedAt: null,
+      volunteer: incident.volunteer,
+      uiState: {
+        screenTitle: 'جاري إرسال طلب الطوارئ...',
+        screenSubtitle: 'يتم مشاركة موقعك الآن',
+        helperText: 'لا تغلق التطبيق',
+        tone: 'danger',
+        canCancel: true,
+        keepAppOpen: true,
+        pollIntervalSeconds: 5,
+        estimatedResponseMinutes: 2,
+      },
+    },
+    created: true,
   });
 });
 
@@ -72,7 +99,7 @@ const updateSosRequestLocation = asyncHandler(async (req, res) => {
 const respondToSosRequest = asyncHandler(async (req, res) => {
   const result = await sosRequestService.respondToSosRequest(
     req.params.requestId,
-    req.user.id,
+    req.user,
   );
 
   res.status(200).json({
@@ -85,7 +112,7 @@ const updateSosRequestStatus = asyncHandler(async (req, res) => {
   const result = await sosRequestService.updateSosRequestStatus(
     req.params.requestId,
     req.body,
-    req.user.id,
+    req.user,
   );
 
   res.status(200).json({

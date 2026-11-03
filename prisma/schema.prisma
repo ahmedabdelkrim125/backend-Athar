@@ -8,34 +8,97 @@ datasource db {
 }
 
 model Volunteer {
-  id               Int                    @id @default(autoincrement())
-  fullName         String                 @map("full_name")
-  nationalId       String                 @unique @map("national_id")
-  email            String                 @unique
-  phone            String                 @unique
-  passwordHash     String                 @map("password_hash")
-  gender           Gender?
-  dateOfBirth      DateTime?              @map("date_of_birth") @db.Date
-  city             String?
-  joinDate         DateTime               @default(now()) @map("join_date")
-  status           VolunteerStatus        @default(PENDING)
-  totalHours       Int                    @default(0) @map("total_hours")
-  points           Int                    @default(0)
-  createdAt        DateTime               @default(now()) @map("created_at")
-  avatarUrl        String?                @map("avatar_url")
-  authSessions     AuthSession[]
-  campaignsCreated Campaign[]             @relation("CampaignCreator")
-  postComments     CommunityPostComment[]
-  postLikes        CommunityPostLike[]
-  communityPosts   CommunityPost[]
-  reports          Report[]
-  sosRequests      SosRequest[]
-  volunteerBadges  VolunteerBadge[]
-  ratingsGiven     VolunteerRating[]      @relation("RatingLeader")
-  ratingsReceived  VolunteerRating[]      @relation("RatedVolunteer")
-  assignedTasks    VolunteerTask[]
+  id                     Int                          @id @default(autoincrement())
+  fullName               String                       @map("full_name")
+  nationalId             String                       @unique @map("national_id")
+  email                  String                       @unique
+  phone                  String                       @unique
+  passwordHash           String                       @map("password_hash")
+  gender                 Gender?
+  dateOfBirth            DateTime?                    @map("date_of_birth") @db.Date
+  city                   String?
+  joinDate               DateTime                     @default(now()) @map("join_date")
+  status                 VolunteerStatus              @default(PENDING)
+  role                   VolunteerRole                @default(VOLUNTEER)
+  totalHours             Int                          @default(0) @map("total_hours")
+  points                 Int                          @default(0)
+  createdAt              DateTime                     @default(now()) @map("created_at")
+  avatarUrl              String?                      @map("avatar_url")
+  locationSharingEnabled Boolean                      @default(false) @map("location_sharing_enabled")
+  lastKnownLatitude      Decimal?                     @map("last_known_latitude") @db.Decimal(10, 7)
+  lastKnownLongitude     Decimal?                     @map("last_known_longitude") @db.Decimal(10, 7)
+  locationAccuracy       Decimal?                     @map("location_accuracy") @db.Decimal(8, 2)
+  locationLastUpdatedAt  DateTime?                    @map("location_last_updated_at")
+  authSessions           AuthSession[]
+  campaignsCreated       Campaign[]                   @relation("CampaignCreator")
+  postComments           CommunityPostComment[]
+  postLikes              CommunityPostLike[]
+  communityPosts         CommunityPost[]
+  reports                Report[]
+  sosRequests            SosRequest[]
+  volunteerBadges        VolunteerBadge[]
+  ratingsGiven           VolunteerRating[]            @relation("RatingLeader")
+  ratingsReceived        VolunteerRating[]            @relation("RatedVolunteer")
+  assignedTasks          VolunteerTask[]
+  missionJoinRequests    MissionJoinRequest[]
+  approvedMissionTasks   Task[]                       @relation("MissionApprover")
+  notifications          Notification[]
+  devices                UserDevice[]
+  reviewedReports        Report[]                     @relation("ReportReviewer")
+  reportReviewActions    ReportReviewAudit[]          @relation("ReportReviewAuditor")
+  locationAccessLogs     VolunteerLocationAccessLog[] @relation("LocationAccessSubject")
+  locationAccessedLogs   VolunteerLocationAccessLog[] @relation("LegacyLocationAccessActor")
+  locationUpdates        VolunteerLocationUpdate[]
+  sosIncidentsResponded  SosRequest[]                 @relation("SosResponder")
+  sosIncidentAudits      SosIncidentAudit[]           @relation("SosAuditActor")
+  legacyAuditLogs        AuditLog[]                   @relation("VolunteerAuditActor")
 
+  @@index([locationSharingEnabled, locationLastUpdatedAt])
+  @@index([lastKnownLatitude, lastKnownLongitude])
   @@map("volunteers")
+}
+
+model Admin {
+  id                    Int                          @id @default(autoincrement())
+  email                 String                       @unique
+  fullName              String                       @map("full_name")
+  passwordHash          String                       @map("password_hash")
+  role                  AdminRole                    @default(ADMIN)
+  isActive              Boolean                      @default(true) @map("is_active")
+  mustChangePassword    Boolean                      @default(false) @map("must_change_password")
+  passwordChangedAt     DateTime?                    @map("password_changed_at")
+  createdAt             DateTime                     @default(now()) @map("created_at")
+  updatedAt             DateTime                     @updatedAt @map("updated_at")
+  authSessions          AdminAuthSession[]
+  notifications         Notification[]
+  devices               UserDevice[]
+  auditLogs             AuditLog[]                   @relation("AdminAuditActor")
+  sosIncidentAudits     SosIncidentAudit[]           @relation("AdminSosAuditActor")
+  locationAccessLogs    VolunteerLocationAccessLog[] @relation("AdminLocationAccessActor")
+  campaignsCreated      Campaign[]                   @relation("AdminCampaignCreator")
+  approvedTasks         Task[]                       @relation("AdminMissionApprover")
+  reviewedReports       Report[]                     @relation("AdminReportReviewer")
+  reportReviewActions   ReportReviewAudit[]          @relation("AdminReportReviewAuditor")
+  sosIncidentsResponded SosRequest[]                 @relation("AdminSosResponder")
+
+  @@index([isActive, createdAt])
+  @@map("admins")
+}
+
+model AdminAuthSession {
+  id               Int       @id @default(autoincrement())
+  adminId          Int       @map("admin_id")
+  refreshTokenHash String?   @unique @map("refresh_token_hash")
+  userAgent        String?   @map("user_agent") @db.VarChar(512)
+  ipAddress        String?   @map("ip_address") @db.VarChar(64)
+  expiresAt        DateTime  @map("expires_at")
+  revokedAt        DateTime? @map("revoked_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  admin            Admin     @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId, revokedAt])
+  @@map("admin_auth_sessions")
 }
 
 model AuthSession {
@@ -64,6 +127,7 @@ model Location {
   campaigns Campaign[]
   tasks     Task[]
 
+  @@index([latitude, longitude])
   @@map("locations")
 }
 
@@ -74,7 +138,8 @@ model Campaign {
   startDate              DateTime          @map("start_date")
   endDate                DateTime          @map("end_date")
   locationId             Int               @map("location_id")
-  createdById            Int               @map("created_by")
+  createdById            Int?              @map("created_by")
+  createdByAdminId       Int?              @map("created_by_admin_id")
   status                 CampaignStatus    @default(DRAFT)
   coverImage             String?           @map("cover_image")
   attendanceRadiusMeters Int               @default(100) @map("attendance_radius_meters")
@@ -82,60 +147,88 @@ model Campaign {
   reportPoints           Int               @default(50) @map("report_points")
   startTime              DateTime?         @map("start_time") @db.Time(0)
   endTime                DateTime?         @map("end_time") @db.Time(0)
-  createdBy              Volunteer         @relation("CampaignCreator", fields: [createdById], references: [id])
+  createdBy              Volunteer?        @relation("CampaignCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdByAdmin         Admin?            @relation("AdminCampaignCreator", fields: [createdByAdminId], references: [id], onDelete: SetNull)
   location               Location          @relation(fields: [locationId], references: [id])
   reports                Report[]
   tasks                  Task[]
   ratings                VolunteerRating[]
 
   @@index([createdById], map: "campaigns_created_by_fkey")
+  @@index([createdByAdminId])
   @@index([locationId], map: "campaigns_location_id_fkey")
   @@map("campaigns")
 }
 
 model Task {
-  id                     Int             @id @default(autoincrement())
+  id                     Int                          @id @default(autoincrement())
   title                  String
-  description            String          @db.Text
-  campaignId             Int             @map("campaign_id")
-  date                   DateTime        @db.Date
-  startTime              DateTime?       @map("start_time") @db.Time(0)
-  endTime                DateTime?       @map("end_time") @db.Time(0)
-  locationId             Int             @map("location_id")
-  status                 TaskStatus      @default(OPEN)
-  attendanceRadiusMeters Int?            @map("attendance_radius_meters")
-  durationHours          Int?            @map("duration_hours")
-  rewardBadgeId          Int?            @map("reward_badge_id")
+  description            String                       @db.Text
+  campaignId             Int                          @map("campaign_id")
+  date                   DateTime                     @db.Date
+  startTime              DateTime?                    @map("start_time") @db.Time(0)
+  endTime                DateTime?                    @map("end_time") @db.Time(0)
+  locationId             Int                          @map("location_id")
+  status                 TaskStatus                   @default(OPEN)
+  approvalStatus         MissionApprovalStatus        @default(APPROVED) @map("approval_status")
+  approvedById           Int?                         @map("approved_by_id")
+  approvedByAdminId      Int?                         @map("approved_by_admin_id")
+  approvedAt             DateTime?                    @map("approved_at")
+  requiredVolunteers     Int?                         @map("required_volunteers")
+  attendanceRadiusMeters Int?                         @map("attendance_radius_meters")
+  durationHours          Int?                         @map("duration_hours")
+  rewardBadgeId          Int?                         @map("reward_badge_id")
   reports                Report[]
-  campaign               Campaign        @relation(fields: [campaignId], references: [id])
-  location               Location        @relation(fields: [locationId], references: [id])
-  rewardBadge            Badge?          @relation(fields: [rewardBadgeId], references: [id])
+  campaign               Campaign                     @relation(fields: [campaignId], references: [id])
+  location               Location                     @relation(fields: [locationId], references: [id])
+  rewardBadge            Badge?                       @relation(fields: [rewardBadgeId], references: [id])
   volunteerTasks         VolunteerTask[]
+  missionJoinRequests    MissionJoinRequest[]
+  locationAccessLogs     VolunteerLocationAccessLog[]
+  approvedBy             Volunteer?                   @relation("MissionApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedByAdmin        Admin?                       @relation("AdminMissionApprover", fields: [approvedByAdminId], references: [id], onDelete: SetNull)
+  emergencyIncidents     SosRequest[]
+  locationUpdates        VolunteerLocationUpdate[]
 
   @@index([campaignId], map: "tasks_campaign_id_fkey")
   @@index([locationId], map: "tasks_location_id_fkey")
   @@index([rewardBadgeId], map: "tasks_reward_badge_id_fkey")
+  @@index([approvalStatus, date])
+  @@index([approvedById])
+  @@index([approvedByAdminId])
   @@map("tasks")
 }
 
 model Report {
-  id            Int       @id @default(autoincrement())
-  volunteerId   Int       @map("volunteer_id")
-  taskId        Int       @map("task_id")
-  campaignId    Int       @map("campaign_id")
-  notes         String?   @db.Text
-  voiceNote     String?   @map("voice_note")
-  images        Json?
-  rating        Int?
-  createdAt     DateTime  @default(now()) @map("created_at")
-  pointsAwarded Int       @default(0) @map("points_awarded")
-  campaign      Campaign  @relation(fields: [campaignId], references: [id])
-  task          Task      @relation(fields: [taskId], references: [id])
-  volunteer     Volunteer @relation(fields: [volunteerId], references: [id])
+  id                Int                  @id @default(autoincrement())
+  volunteerId       Int                  @map("volunteer_id")
+  taskId            Int                  @map("task_id")
+  campaignId        Int                  @map("campaign_id")
+  notes             String?              @db.Text
+  voiceNote         String?              @map("voice_note")
+  images            Json?
+  rating            Int?
+  createdAt         DateTime             @default(now()) @map("created_at")
+  updatedAt         DateTime             @updatedAt @map("updated_at")
+  pointsAwarded     Int                  @default(0) @map("points_awarded")
+  approvalStatus    ReportApprovalStatus @default(APPROVED) @map("approval_status")
+  rejectionReason   String?              @map("rejection_reason") @db.Text
+  reviewedById      Int?                 @map("reviewed_by_id")
+  reviewedByAdminId Int?                 @map("reviewed_by_admin_id")
+  reviewedAt        DateTime?            @map("reviewed_at")
+  campaign          Campaign             @relation(fields: [campaignId], references: [id])
+  task              Task                 @relation(fields: [taskId], references: [id])
+  volunteer         Volunteer            @relation(fields: [volunteerId], references: [id])
+  reviewedBy        Volunteer?           @relation("ReportReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedByAdmin   Admin?               @relation("AdminReportReviewer", fields: [reviewedByAdminId], references: [id], onDelete: SetNull)
+  reviewAudits      ReportReviewAudit[]
 
   @@unique([volunteerId, taskId])
   @@index([campaignId], map: "reports_campaign_id_fkey")
   @@index([taskId], map: "reports_task_id_fkey")
+  @@index([approvalStatus, createdAt])
+  @@index([reviewedById])
+  @@index([reviewedByAdminId])
   @@map("reports")
 }
 
@@ -179,17 +272,109 @@ model VolunteerRating {
 }
 
 model SosRequest {
-  id          Int              @id @default(autoincrement())
-  volunteerId Int              @map("volunteer_id")
-  latitude    Decimal          @db.Decimal(10, 7)
-  longitude   Decimal          @db.Decimal(10, 7)
-  status      SosRequestStatus @default(OPEN)
-  createdAt   DateTime         @default(now()) @map("created_at")
-  resolvedAt  DateTime?        @map("resolved_at")
-  volunteer   Volunteer        @relation(fields: [volunteerId], references: [id])
+  id                 Int                       @id @default(autoincrement())
+  volunteerId        Int                       @map("volunteer_id")
+  taskId             Int?                      @map("task_id")
+  respondedById      Int?                      @map("responded_by_id")
+  respondedByAdminId Int?                      @map("responded_by_admin_id")
+  reference          String                    @unique @db.VarChar(40)
+  latitude           Decimal?                  @db.Decimal(10, 7)
+  longitude          Decimal?                  @db.Decimal(10, 7)
+  accuracy           Decimal?                  @db.Decimal(8, 2)
+  message            String?                   @db.Text
+  deviceTimestamp    DateTime?                 @map("device_timestamp")
+  lastUpdatedAt      DateTime                  @default(now()) @map("last_updated_at")
+  status             SosRequestStatus          @default(OPEN)
+  cancelledReason    String?                   @map("cancelled_reason") @db.Text
+  createdAt          DateTime                  @default(now()) @map("created_at")
+  resolvedAt         DateTime?                 @map("resolved_at")
+  volunteer          Volunteer                 @relation(fields: [volunteerId], references: [id])
+  task               Task?                     @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  respondedBy        Volunteer?                @relation("SosResponder", fields: [respondedById], references: [id], onDelete: SetNull)
+  respondedByAdmin   Admin?                    @relation("AdminSosResponder", fields: [respondedByAdminId], references: [id], onDelete: SetNull)
+  locationUpdates    VolunteerLocationUpdate[]
+  audits             SosIncidentAudit[]
 
   @@index([volunteerId], map: "sos_requests_volunteer_id_fkey")
+  @@index([status, createdAt])
+  @@index([taskId])
+  @@index([respondedById])
+  @@index([respondedByAdminId])
   @@map("sos_requests")
+}
+
+model VolunteerLocationUpdate {
+  id          Int         @id @default(autoincrement())
+  volunteerId Int         @map("volunteer_id")
+  taskId      Int?        @map("task_id")
+  incidentId  Int?        @map("incident_id")
+  latitude    Decimal     @db.Decimal(10, 7)
+  longitude   Decimal     @db.Decimal(10, 7)
+  accuracy    Decimal     @db.Decimal(8, 2)
+  recordedAt  DateTime    @default(now()) @map("recorded_at")
+  receivedAt  DateTime    @default(now()) @map("received_at")
+  expiresAt   DateTime?   @map("expires_at")
+  volunteer   Volunteer   @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
+  task        Task?       @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  incident    SosRequest? @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([volunteerId, recordedAt])
+  @@index([taskId, recordedAt])
+  @@index([incidentId, recordedAt])
+  @@index([expiresAt])
+  @@map("volunteer_location_updates")
+}
+
+model SosIncidentAudit {
+  id           Int               @id @default(autoincrement())
+  incidentId   Int               @map("incident_id")
+  actorId      Int?              @map("actor_id")
+  actorAdminId Int?              @map("actor_admin_id")
+  fromStatus   SosRequestStatus? @map("from_status")
+  toStatus     SosRequestStatus? @map("to_status")
+  action       String            @db.VarChar(64)
+  notes        String?           @db.Text
+  createdAt    DateTime          @default(now()) @map("created_at")
+  incident     SosRequest        @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  actor        Volunteer?        @relation("SosAuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  actorAdmin   Admin?            @relation("AdminSosAuditActor", fields: [actorAdminId], references: [id], onDelete: SetNull)
+
+  @@index([incidentId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([actorAdminId, createdAt])
+  @@map("sos_incident_audits")
+}
+
+model AuditLog {
+  id         Int        @id @default(autoincrement())
+  actorId    Int?       @map("actor_id")
+  adminId    Int?       @map("admin_id")
+  action     String     @db.VarChar(96)
+  targetType String     @map("target_type") @db.VarChar(64)
+  targetId   String     @map("target_id") @db.VarChar(64)
+  reason     String?    @db.Text
+  data       Json?
+  createdAt  DateTime   @default(now()) @map("created_at")
+  actor      Volunteer? @relation("VolunteerAuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  admin      Admin?     @relation("AdminAuditActor", fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, createdAt])
+  @@index([adminId, createdAt])
+  @@index([targetType, targetId, createdAt])
+  @@index([action, createdAt])
+  @@map("audit_logs")
+}
+
+model RateLimitBucket {
+  id         Int      @id @default(autoincrement())
+  key        String   @db.VarChar(191)
+  windowFrom DateTime @map("window_from")
+  count      Int      @default(1)
+  expiresAt  DateTime @map("expires_at")
+
+  @@unique([key, windowFrom])
+  @@index([expiresAt])
+  @@map("rate_limit_buckets")
 }
 
 model Badge {
@@ -215,6 +400,102 @@ model VolunteerTitle {
   minReports        Int    @default(0) @map("min_reports")
 
   @@map("volunteer_titles")
+}
+
+model MissionJoinRequest {
+  id              Int                      @id @default(autoincrement())
+  volunteerId     Int                      @map("volunteer_id")
+  taskId          Int                      @map("task_id")
+  status          MissionJoinRequestStatus @default(PENDING)
+  createdAt       DateTime                 @default(now()) @map("created_at")
+  updatedAt       DateTime                 @updatedAt @map("updated_at")
+  decidedAt       DateTime?                @map("decided_at")
+  rejectionReason String?                  @map("rejection_reason") @db.Text
+  volunteer       Volunteer                @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
+  task            Task                     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([volunteerId, taskId])
+  @@index([taskId, status])
+  @@index([volunteerId, status])
+  @@map("mission_join_requests")
+}
+
+model Notification {
+  id        Int              @id @default(autoincrement())
+  userId    Int?             @map("user_id")
+  adminId   Int?             @map("admin_id")
+  title     String           @db.VarChar(191)
+  body      String           @db.Text
+  type      NotificationType
+  data      Json?
+  eventKey  String?          @map("event_key") @db.VarChar(191)
+  isRead    Boolean          @default(false) @map("is_read")
+  createdAt DateTime         @default(now()) @map("created_at")
+  readAt    DateTime?        @map("read_at")
+  user      Volunteer?       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  admin     Admin?           @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, eventKey])
+  @@unique([adminId, eventKey])
+  @@index([userId, isRead, createdAt])
+  @@index([adminId, isRead, createdAt])
+  @@map("notifications")
+}
+
+model UserDevice {
+  id         Int        @id @default(autoincrement())
+  userId     Int?       @map("user_id")
+  adminId    Int?       @map("admin_id")
+  fcmToken   String     @unique @map("fcm_token") @db.VarChar(512)
+  platform   String     @db.VarChar(32)
+  isActive   Boolean    @default(true) @map("is_active")
+  lastSeenAt DateTime   @default(now()) @map("last_seen_at")
+  createdAt  DateTime   @default(now()) @map("created_at")
+  updatedAt  DateTime   @updatedAt @map("updated_at")
+  user       Volunteer? @relation(fields: [userId], references: [id], onDelete: Cascade)
+  admin      Admin?     @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isActive])
+  @@index([adminId, isActive])
+  @@map("user_devices")
+}
+
+model ReportReviewAudit {
+  id              Int                @id @default(autoincrement())
+  reportId        Int                @map("report_id")
+  reviewerId      Int?               @map("reviewer_id")
+  reviewerAdminId Int?               @map("reviewer_admin_id")
+  action          ReportReviewAction
+  reason          String?            @db.Text
+  createdAt       DateTime           @default(now()) @map("created_at")
+  report          Report             @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  reviewer        Volunteer?         @relation("ReportReviewAuditor", fields: [reviewerId], references: [id], onDelete: SetNull)
+  reviewerAdmin   Admin?             @relation("AdminReportReviewAuditor", fields: [reviewerAdminId], references: [id], onDelete: SetNull)
+
+  @@index([reportId, createdAt])
+  @@index([reviewerId])
+  @@index([reviewerAdminId])
+  @@map("report_review_audits")
+}
+
+model VolunteerLocationAccessLog {
+  id                Int                            @id @default(autoincrement())
+  volunteerId       Int                            @map("volunteer_id")
+  accessedById      Int?                           @map("accessed_by_id")
+  accessedByAdminId Int?                           @map("accessed_by_admin_id")
+  taskId            Int?                           @map("task_id")
+  purpose           VolunteerLocationAccessPurpose
+  accessedAt        DateTime                       @default(now()) @map("accessed_at")
+  volunteer         Volunteer                      @relation("LocationAccessSubject", fields: [volunteerId], references: [id], onDelete: Cascade)
+  accessedBy        Volunteer?                     @relation("LegacyLocationAccessActor", fields: [accessedById], references: [id], onDelete: SetNull)
+  accessedByAdmin   Admin?                         @relation("AdminLocationAccessActor", fields: [accessedByAdminId], references: [id], onDelete: SetNull)
+  task              Task?                          @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  @@index([volunteerId, accessedAt])
+  @@index([accessedById, accessedAt])
+  @@index([accessedByAdminId, accessedAt])
+  @@index([taskId])
+  @@map("volunteer_location_access_logs")
 }
 
 model VolunteerBadge {
@@ -296,6 +577,14 @@ enum VolunteerStatus {
   SUSPENDED
 }
 
+enum VolunteerRole {
+  VOLUNTEER
+}
+
+enum AdminRole {
+  ADMIN
+}
+
 enum CampaignStatus {
   DRAFT
   PUBLISHED
@@ -323,6 +612,58 @@ enum VolunteerTaskStatus {
 enum SosRequestStatus {
   OPEN
   RESPONDED
+  ACKNOWLEDGED
+  IN_PROGRESS
   RESOLVED
   CANCELLED
+  CLOSED
+  FALSE_ALARM
+}
+
+enum MissionApprovalStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum MissionJoinRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum NotificationType {
+  MISSION_APPROVED
+  MISSION_CANCELLED
+  MISSION_JOIN_REQUEST
+  MISSION_JOIN_APPROVED
+  MISSION_JOIN_REJECTED
+  MISSION_REMINDER
+  MISSION_CHECK_IN
+  REPORT_SUBMITTED
+  REPORT_APPROVED
+  REPORT_REJECTED
+  EMERGENCY_SOS
+  EMERGENCY_STATUS
+}
+
+enum ReportApprovalStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum ReportReviewAction {
+  APPROVED
+  REJECTED
+}
+
+enum VolunteerLocationAccessPurpose {
+  MISSION_APPROVAL_TARGETING
+  OWNER_LOCATION_UPDATE
+  OWNER_LOCATION_DISABLE
+  ADMIN_LOCATION_MONITORING
+  ADMIN_LOCATION_HISTORY
 }

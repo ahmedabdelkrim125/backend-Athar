@@ -2,7 +2,7 @@ const taskService = require('../services/task.service');
 const asyncHandler = require('../utils/async-handler');
 
 const listTasks = asyncHandler(async (req, res) => {
-  const result = await taskService.listTasks(req.query, req.user.id);
+  const result = await taskService.listTasks(req.query, req.user);
 
   res.status(200).json({
     success: true,
@@ -13,7 +13,7 @@ const listTasks = asyncHandler(async (req, res) => {
 const getTaskById = asyncHandler(async (req, res) => {
   const result = await taskService.getTaskById(
     req.params.taskId,
-    req.user.id,
+    req.user,
     req.query,
   );
 
@@ -24,7 +24,7 @@ const getTaskById = asyncHandler(async (req, res) => {
 });
 
 const createTask = asyncHandler(async (req, res) => {
-  const result = await taskService.createTask(req.body, req.user.id);
+  const result = await taskService.createTask(req.body, req.user);
 
   res.status(201).json({
     success: true,
@@ -36,7 +36,7 @@ const updateTask = asyncHandler(async (req, res) => {
   const result = await taskService.updateTask(
     req.params.taskId,
     req.body,
-    req.user.id,
+    req.user,
   );
 
   res.status(200).json({
@@ -48,7 +48,7 @@ const updateTask = asyncHandler(async (req, res) => {
 const listTaskAssignments = asyncHandler(async (req, res) => {
   const result = await taskService.listTaskAssignments(
     req.params.taskId,
-    req.user.id,
+    req.user,
   );
 
   res.status(200).json({
@@ -61,7 +61,7 @@ const assignVolunteerToTask = asyncHandler(async (req, res) => {
   const result = await taskService.assignVolunteerToTask(
     req.params.taskId,
     req.body,
-    req.user.id,
+    req.user,
   );
 
   res.status(201).json({
@@ -75,7 +75,7 @@ const updateTaskAssignment = asyncHandler(async (req, res) => {
     req.params.taskId,
     req.params.volunteerId,
     req.body,
-    req.user.id,
+    req.user,
   );
 
   res.status(200).json({

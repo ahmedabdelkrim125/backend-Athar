@@ -206,8 +206,10 @@ function collectVolunteerMetrics(volunteer, options = {}) {
     ? volunteer.volunteerBadges
     : [];
 
-  const filteredReports = reports.filter((report) =>
-    isWithinPeriod(report.createdAt, periodStart),
+  const filteredReports = reports.filter(
+    (report) =>
+      report.approvalStatus === 'APPROVED' &&
+      isWithinPeriod(report.createdAt, periodStart),
   );
   const filteredAssignments = assignments.filter((assignment) => {
     const assignmentDate =

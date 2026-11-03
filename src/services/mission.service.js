@@ -30,6 +30,7 @@ function buildMissionInclude(volunteerId) {
       select: {
         id: true,
         title: true,
+        createdById: true,
         coverImage: true,
         attendancePoints: true,
         reportPoints: true,
@@ -46,6 +47,15 @@ function buildMissionInclude(volunteerId) {
           },
         },
       },
+    },
+    missionJoinRequests: {
+      where: {
+        volunteerId,
+      },
+      select: {
+        status: true,
+      },
+      take: 1,
     },
     volunteerTasks: {
       where: {
@@ -65,7 +75,7 @@ function buildMissionSteps(assignment, report) {
   const completionFlags = [
     Boolean(assignment) && assignment.status !== 'CANCELLED',
     Boolean(assignment) && FIELD_WORK_STATUSES.includes(assignment.status),
-    Boolean(report),
+    Boolean(report && report.approvalStatus === 'APPROVED'),
   ];
   const definitions = [
     { key: 'joined', title: 'الانضمام للمهمة' },
@@ -89,19 +99,22 @@ function serializeMissionReport(report) {
     images: Array.isArray(report.images) ? report.images : [],
     rating: report.rating,
     pointsAwarded: report.pointsAwarded ?? 0,
+    approvalStatus: report.approvalStatus,
+    rejectionReason: report.rejectionReason,
     createdAt: report.createdAt?.toISOString() ?? null,
   };
 }
 
 function serializeMission(task) {
   const assignment = task.volunteerTasks?.[0] ?? null;
+  const joinRequest = task.missionJoinRequests?.[0] ?? null;
   const report = task.reports?.[0] ?? null;
   const durationHours = calculateTaskDurationHours(task);
   const attendancePoints = task.campaign?.attendancePoints ?? 0;
   const reportPoints = task.campaign?.reportPoints ?? 0;
   const badge = serializeBadge(task.rewardBadge);
   const steps = buildMissionSteps(assignment, report);
-  const isCompleted = Boolean(report) || assignment?.status === 'COMPLETED';
+  const isCompleted = report?.approvalStatus === 'APPROVED';
   const isAssigned = Boolean(assignment) && assignment.status !== 'CANCELLED';
 
   return {
@@ -111,6 +124,7 @@ function serializeMission(task) {
     typeLabel: MISSION_TYPE_LABEL,
     coverImage: task.campaign?.coverImage ?? null,
     status: task.status,
+    approvalStatus: task.approvalStatus,
     date: formatDateOnly(task.date),
     startTime: formatTimeOnly(task.startTime),
     endTime: formatTimeOnly(task.endTime),
@@ -149,6 +163,7 @@ function serializeMission(task) {
           attendancePointsAwarded: assignment.attendancePointsAwarded ?? 0,
         }
       : null,
+    userJoinStatus: joinRequest?.status ?? null,
     report: report ? serializeMissionReport(report) : null,
     earned: isCompleted
       ? {
@@ -159,9 +174,16 @@ function serializeMission(task) {
       : null,
     permissions: {
       isAssigned,
-      canCheckIn: assignment ? ['ASSIGNED', 'CHECKED_OUT'].includes(assignment.status) : false,
+      canCheckIn:
+        task.approvalStatus === 'APPROVED' &&
+        joinRequest?.status === 'APPROVED' &&
+        assignment?.status === 'ASSIGNED',
       canSubmitReport:
         assignment && !report ? REPORTABLE_STATUSES.includes(assignment.status) : false,
+      canResubmitReport:
+        assignment &&
+        report?.approvalStatus === 'REJECTED' &&
+        REPORTABLE_STATUSES.includes(assignment.status),
       hasSubmittedReport: Boolean(report),
     },
   };
@@ -177,6 +199,12 @@ async function getMission(taskId, volunteerId) {
   });
 
   if (!task) {
+    throw new AppError('المهمة غير موجودة', 404);
+  }
+  if (
+    task.approvalStatus !== 'APPROVED' &&
+    task.campaign?.createdById !== volunteerId
+  ) {
     throw new AppError('المهمة غير موجودة', 404);
   }
 
@@ -216,7 +244,7 @@ async function submitMissionReport(taskId, payload, volunteerId) {
   const missionResult = await getMission(parsedTaskId, volunteerId);
 
   return {
-    message: 'تم إرسال التقرير وإنهاء المهمة بنجاح',
+    message: 'تم إرسال التقرير للمراجعة، وسيتم احتساب النقاط والساعات بعد القبول',
     summary: reportResult.summary,
     report: reportResult.report,
     mission: missionResult.mission,

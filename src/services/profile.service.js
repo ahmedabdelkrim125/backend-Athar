@@ -3,6 +3,7 @@ const AppError = require('../utils/app-error');
 const { serializeBadge } = require('../utils/serializers');
 const { listVolunteerTitles } = require('./volunteer-title.service');
 const { resolveVolunteerTitle } = require('../utils/volunteer-titles');
+const volunteerLocationService = require('./volunteer-location.service');
 const {
   buildAchievementCatalog,
   buildAvatarUrl,
@@ -32,6 +33,7 @@ function buildVolunteerSelect() {
     email: true,
     phone: true,
     status: true,
+    locationSharingEnabled: true,
     totalHours: true,
     points: true,
     joinDate: true,
@@ -42,6 +44,7 @@ function buildVolunteerSelect() {
         campaignId: true,
         createdAt: true,
         rating: true,
+        approvalStatus: true,
       },
     },
     assignedTasks: {
@@ -222,6 +225,7 @@ async function getProfileDashboard(volunteerId) {
         phone: currentVolunteer.phone,
         avatarUrl: buildAvatarUrl(currentVolunteer),
         status: currentVolunteer.status,
+        locationSharingEnabled: currentVolunteer.locationSharingEnabled,
         statusLabel: `${buildStatusLabel(currentVolunteer.status)} 🌟`,
         memberSinceLabel: buildMemberSinceLabel(currentVolunteer.joinDate),
         joinDate: currentVolunteer.joinDate?.toISOString?.() || null,
@@ -323,8 +327,23 @@ async function getLeaderboard(volunteerId, periodValue) {
   };
 }
 
+async function setLocationSharing(volunteerId, payload) {
+  return volunteerLocationService.setLocationSharing(volunteerId, payload);
+}
+
+async function updateLastKnownLocation(volunteerId, payload) {
+  return volunteerLocationService.updateLastKnownLocation(volunteerId, payload);
+}
+
+async function listLocationAccessLogs(volunteerId, query) {
+  return volunteerLocationService.listLocationAccessLogs(volunteerId, query);
+}
+
 module.exports = {
   getLeaderboard,
   getProfileDashboard,
   getProfileRecognition,
+  listLocationAccessLogs,
+  setLocationSharing,
+  updateLastKnownLocation,
 };

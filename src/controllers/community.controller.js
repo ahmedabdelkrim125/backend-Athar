@@ -1,5 +1,5 @@
 const asyncHandler = require('../utils/async-handler');
-const { isDemoAdmin } = require('../middleware/demo-admin.middleware');
+const { hasPermission } = require('../middleware/rbac.middleware');
 const communityService = require('../services/community.service');
 
 const listCommunityFeed = asyncHandler(async (req, res) => {
@@ -56,7 +56,7 @@ const createCommunityPostComment = asyncHandler(async (req, res) => {
 
 const deleteCommunityPost = asyncHandler(async (req, res) => {
   const result = await communityService.deleteCommunityPost(req.params.postId, req.user.id, {
-    canModerate: isDemoAdmin(req.user),
+    canModerate: hasPermission(req.user, 'campaigns:manage'),
   });
 
   res.status(200).json({

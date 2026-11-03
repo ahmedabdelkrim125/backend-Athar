@@ -1,6 +1,9 @@
 const prisma = require('../lib/prisma');
 const AppError = require('../utils/app-error');
 const { calculateDistanceMeters } = require('../utils/geolocation');
+const { hasPermission } = require('../middleware/rbac.middleware');
+const { writeAuditLog } = require('./audit.service');
+const emergencyService = require('./emergency.service');
 const {
   serializePagination,
   serializeVolunteerSummary,
@@ -12,7 +15,7 @@ const {
   validateSosRequestStatusPayload,
 } = require('../validators/resource.validators');
 
-const ACTIVE_SOS_STATUSES = ['OPEN', 'RESPONDED'];
+const ACTIVE_SOS_STATUSES = ['OPEN', 'RESPONDED', 'ACKNOWLEDGED', 'IN_PROGRESS'];
 const ACTIVE_WINDOW_HOURS = 12;
 const NEARBY_DEFAULT_RADIUS_KM = 10;
 const NEARBY_MAX_RADIUS_KM = 100;
@@ -22,10 +25,7 @@ function activeSince() {
 }
 
 function isRequestActive(sosRequest) {
-  return (
-    ACTIVE_SOS_STATUSES.includes(sosRequest.status) &&
-    sosRequest.createdAt >= activeSince()
-  );
+  return ACTIVE_SOS_STATUSES.includes(sosRequest.status);
 }
 
 const volunteerSummarySelect = {
@@ -40,6 +40,13 @@ const volunteerSummarySelect = {
 const sosRequestInclude = {
   volunteer: {
     select: volunteerSummarySelect,
+  },
+  task: {
+    select: {
+      id: true,
+      title: true,
+      campaign: { select: { id: true, title: true, createdById: true } },
+    },
   },
 };
 
@@ -61,6 +68,8 @@ function buildSosUiState(status) {
         estimatedResponseMinutes: 2,
       };
     case 'RESPONDED':
+    case 'ACKNOWLEDGED':
+    case 'IN_PROGRESS':
       return {
         screenTitle: 'تم استلام طلب الطوارئ',
         screenSubtitle: 'فريق سند على علم بموقعك الآن',
@@ -102,6 +111,9 @@ function buildSosStatusLabel(status) {
       return 'قيد الإرسال';
     case 'RESPONDED':
       return 'تمت الاستجابة';
+    case 'ACKNOWLEDGED':
+    case 'IN_PROGRESS':
+      return 'تمت الاستجابة';
     case 'RESOLVED':
       return 'تمت المعالجة';
     case 'CANCELLED':
@@ -112,18 +124,16 @@ function buildSosStatusLabel(status) {
 }
 
 function serializeSosRequest(sosRequest) {
-  const latitude = decimalToNumber(sosRequest.latitude);
-  const longitude = decimalToNumber(sosRequest.longitude);
+  const latitude = sosRequest.latitude === null ? null : decimalToNumber(sosRequest.latitude);
+  const longitude = sosRequest.longitude === null ? null : decimalToNumber(sosRequest.longitude);
 
   return {
     id: sosRequest.id,
+    reference: sosRequest.reference,
     volunteerId: sosRequest.volunteerId,
     latitude,
     longitude,
-    location: {
-      latitude,
-      longitude,
-    },
+    location: latitude === null || longitude === null ? null : { latitude, longitude },
     status: sosRequest.status,
     statusLabel: buildSosStatusLabel(sosRequest.status),
     isActive: isRequestActive(sosRequest),
@@ -140,9 +150,6 @@ async function findActiveSosRequest(volunteerId) {
       volunteerId,
       status: {
         in: ACTIVE_SOS_STATUSES,
-      },
-      createdAt: {
-        gte: activeSince(),
       },
     },
     include: sosRequestInclude,
@@ -167,21 +174,20 @@ async function getSosRequestOrThrow(requestId) {
   return sosRequest;
 }
 
-async function listSosRequests(query, volunteerId) {
+async function listSosRequests(query, actor) {
   const filters = validateSosRequestListQuery(query);
   const where = {};
 
+  const canManageEmergencies = hasPermission(actor, 'emergencies:manage');
   if (filters.status) {
     where.status = filters.status;
   }
 
-  if (filters.volunteerId) {
+  if (canManageEmergencies && filters.volunteerId) {
     where.volunteerId = filters.volunteerId;
   }
 
-  if (filters.mine || query.mine === 'true') {
-    where.volunteerId = volunteerId;
-  }
+  if (!canManageEmergencies || filters.mine || query.mine === 'true') where.volunteerId = actor.id;
 
   const [requests, total] = await Promise.all([
     prisma.sosRequest.findMany({
@@ -203,9 +209,15 @@ async function listSosRequests(query, volunteerId) {
   };
 }
 
-async function getSosRequestById(requestId) {
+async function getSosRequestById(requestId, actor) {
   const parsedRequestId = parsePositiveInteger(requestId, 'معرف الاستغاثة');
   const sosRequest = await getSosRequestOrThrow(parsedRequestId);
+  if (
+    sosRequest.volunteerId !== actor.id &&
+    !hasPermission(actor, 'emergencies:manage')
+  ) {
+    throw new AppError('ليس لديك صلاحية الوصول إلى هذا البلاغ', 403);
+  }
 
   return {
     message: 'تم جلب بيانات الاستغاثة بنجاح',
@@ -220,7 +232,7 @@ async function getActiveSosRequest(volunteerId) {
       where: {
         volunteerId,
         status: {
-          in: ['RESOLVED', 'CANCELLED'],
+          in: ['RESOLVED', 'CANCELLED', 'CLOSED', 'FALSE_ALARM'],
         },
       },
     }),
@@ -239,38 +251,8 @@ async function getActiveSosRequest(volunteerId) {
 }
 
 async function createSosRequest(payload, volunteerId) {
-  const validatedPayload = validateSosRequestCreatePayload(payload);
-  const existingActiveRequest = await findActiveSosRequest(volunteerId);
-
-  if (existingActiveRequest) {
-    const refreshedRequest = await prisma.sosRequest.update({
-      where: {
-        id: existingActiveRequest.id,
-      },
-      data: {
-        latitude: validatedPayload.latitude,
-        longitude: validatedPayload.longitude,
-      },
-      include: sosRequestInclude,
-    });
-
-    return {
-      statusCode: 200,
-      message: 'يوجد طلب طوارئ نشط بالفعل لهذا الحساب',
-      request: serializeSosRequest(refreshedRequest),
-      created: false,
-    };
-  }
-
-  const sosRequest = await prisma.sosRequest.create({
-    data: {
-      volunteerId,
-      latitude: validatedPayload.latitude,
-      longitude: validatedPayload.longitude,
-    },
-    include: sosRequestInclude,
-  });
-
+  const { incident } = await emergencyService.createLegacyIncident(volunteerId, payload);
+  const sosRequest = await getSosRequestOrThrow(incident.id);
   return {
     statusCode: 201,
     message: 'تم إنشاء طلب الاستغاثة بنجاح',
@@ -280,22 +262,48 @@ async function createSosRequest(payload, volunteerId) {
 }
 
 async function cancelActiveSosRequest(volunteerId) {
-  const activeRequest = await findActiveSosRequest(volunteerId);
-
-  if (!activeRequest) {
-    throw new AppError('لا يوجد طلب طوارئ نشط لإلغائه', 404);
-  }
-
-  const sosRequest = await prisma.sosRequest.update({
-    where: {
-      id: activeRequest.id,
-    },
-    data: {
-      status: 'CANCELLED',
-      resolvedAt: new Date(),
-    },
-    include: sosRequestInclude,
+  const sosRequest = await prisma.$transaction(async (transactionClient) => {
+    const activeRequest = await transactionClient.sosRequest.findFirst({
+      where: { volunteerId, status: { in: ACTIVE_SOS_STATUSES } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!activeRequest) throw new AppError('لا يوجد طلب طوارئ نشط لإلغائه', 404);
+    const updated = await transactionClient.sosRequest.update({
+      where: { id: activeRequest.id },
+      data: { status: 'CANCELLED', resolvedAt: new Date() },
+      include: sosRequestInclude,
+    });
+    await transactionClient.sosIncidentAudit.create({
+      data: {
+        incidentId: activeRequest.id,
+        actorId: volunteerId,
+        fromStatus: activeRequest.status,
+        toStatus: 'CANCELLED',
+        action: 'SOS_CANCELLED',
+      },
+    });
+    await writeAuditLog(
+      {
+        actorId: volunteerId,
+        action: 'EMERGENCY_SOS_CANCELLED',
+        targetType: 'SOS_INCIDENT',
+        targetId: activeRequest.id,
+        reason: 'إلغاء عبر واجهة SOS القديمة',
+      },
+      transactionClient,
+    );
+    await transactionClient.volunteer.updateMany({
+      where: { id: volunteerId, locationSharingEnabled: false },
+      data: {
+        lastKnownLatitude: null,
+        lastKnownLongitude: null,
+        locationAccuracy: null,
+        locationLastUpdatedAt: null,
+      },
+    });
+    return updated;
   });
+  await emergencyService.notifyEmergencyRecipients(sosRequest, 'SOS_CANCELLED');
 
   return {
     message: 'تم إلغاء طلب الطوارئ النشط بنجاح',
@@ -303,36 +311,96 @@ async function cancelActiveSosRequest(volunteerId) {
   };
 }
 
-async function updateSosRequestStatus(requestId, payload, volunteerId) {
+async function updateSosRequestStatus(requestId, payload, actor) {
   const parsedRequestId = parsePositiveInteger(requestId, 'معرف الاستغاثة');
   const validatedPayload = validateSosRequestStatusPayload(payload);
   const existingRequest = await getSosRequestOrThrow(parsedRequestId);
 
   if (
     validatedPayload.status === 'CANCELLED' &&
-    existingRequest.volunteerId !== volunteerId
+    actor.accountType !== 'ADMIN' &&
+    existingRequest.volunteerId !== actor.id
   ) {
     throw new AppError('فقط صاحب الطلب يمكنه إلغاء الاستغاثة', 403);
   }
 
   if (
-    existingRequest.volunteerId !== volunteerId &&
-    !['RESPONDED', 'RESOLVED'].includes(validatedPayload.status)
+    validatedPayload.status !== 'CANCELLED' &&
+    !hasPermission(actor, 'emergencies:manage')
   ) {
-    throw new AppError('غير مسموح لك بتغيير حالة هذا الطلب إلى هذه القيمة', 403);
+    throw new AppError('ليس لديك صلاحية إدارة بلاغات الطوارئ', 403);
   }
 
-  const sosRequest = await prisma.sosRequest.update({
-    where: {
-      id: parsedRequestId,
-    },
-    data: {
-      status: validatedPayload.status,
-      resolvedAt:
-        ['RESOLVED', 'CANCELLED'].includes(validatedPayload.status) ? new Date() : null,
-    },
-    include: sosRequestInclude,
+  if (!isRequestActive(existingRequest)) {
+    throw new AppError('لا يمكن تغيير حالة بلاغ مغلق', 409);
+  }
+  const status = validatedPayload.status;
+  if (
+    status === existingRequest.status ||
+    (status === 'RESPONDED' && existingRequest.status !== 'OPEN') ||
+    (status === 'CANCELLED' && !['OPEN', 'RESPONDED', 'ACKNOWLEDGED'].includes(existingRequest.status))
+  ) {
+    throw new AppError('لا يمكن الانتقال من الحالة الحالية إلى الحالة المطلوبة', 409);
+  }
+  const sosRequest = await prisma.$transaction(async (transactionClient) => {
+    const current = await transactionClient.sosRequest.findUnique({
+      where: { id: parsedRequestId },
+    });
+    if (!current || current.status !== existingRequest.status) {
+      throw new AppError('تم تحديث البلاغ بالتزامن، أعد تحميله ثم حاول مجددًا', 409);
+    }
+    const updated = await transactionClient.sosRequest.update({
+      where: { id: parsedRequestId },
+      data: {
+        status,
+        respondedById: null,
+        respondedByAdminId:
+          actor.accountType === 'ADMIN'
+            ? actor.id
+            : current.respondedByAdminId,
+        resolvedAt: ['RESOLVED', 'CANCELLED', 'CLOSED', 'FALSE_ALARM'].includes(status)
+          ? new Date()
+          : null,
+      },
+      include: sosRequestInclude,
+    });
+    await transactionClient.sosIncidentAudit.create({
+      data: {
+        incidentId: parsedRequestId,
+        ...(actor.accountType === 'ADMIN'
+          ? { actorAdminId: actor.id }
+          : { actorId: actor.id }),
+        fromStatus: current.status,
+        toStatus: status,
+        action: 'STATUS_CHANGED',
+      },
+    });
+    await writeAuditLog(
+      {
+        ...(actor.accountType === 'ADMIN'
+          ? { adminId: actor.id }
+          : { actorId: actor.id }),
+        action: status === 'CANCELLED' ? 'EMERGENCY_SOS_CANCELLED' : 'EMERGENCY_INCIDENT_STATUS_CHANGED',
+        targetType: 'SOS_INCIDENT',
+        targetId: parsedRequestId,
+        data: { fromStatus: current.status, toStatus: status },
+      },
+      transactionClient,
+    );
+    if (['RESOLVED', 'CANCELLED'].includes(status)) {
+      await transactionClient.volunteer.updateMany({
+        where: { id: current.volunteerId, locationSharingEnabled: false },
+        data: {
+          lastKnownLatitude: null,
+          lastKnownLongitude: null,
+          locationAccuracy: null,
+          locationLastUpdatedAt: null,
+        },
+      });
+    }
+    return updated;
   });
+  await emergencyService.notifyEmergencyRecipients(sosRequest, 'SOS_STATUS_CHANGED');
 
   return {
     message: 'تم تحديث حالة طلب الاستغاثة بنجاح',
@@ -373,28 +441,8 @@ function serializeNearbySosRequest(sosRequest, distanceMeters) {
 
 async function updateSosRequestLocation(requestId, payload, volunteerId) {
   const parsedRequestId = parsePositiveInteger(requestId, 'معرف الاستغاثة');
-  const { latitude, longitude } = validateSosRequestCreatePayload(payload);
-  const existingRequest = await getSosRequestOrThrow(parsedRequestId);
-
-  if (existingRequest.volunteerId !== volunteerId) {
-    throw new AppError('فقط صاحب الطلب يمكنه تحديث الموقع', 403);
-  }
-
-  if (!isRequestActive(existingRequest)) {
-    throw new AppError('طلب الاستغاثة لم يعد نشطًا', 409);
-  }
-
-  const sosRequest = await prisma.sosRequest.update({
-    where: {
-      id: parsedRequestId,
-    },
-    data: {
-      latitude,
-      longitude,
-    },
-    include: sosRequestInclude,
-  });
-
+  await emergencyService.updateIncidentLocation(parsedRequestId, volunteerId, payload);
+  const sosRequest = await getSosRequestOrThrow(parsedRequestId);
   return {
     message: 'تم تحديث موقع الاستغاثة بنجاح',
     request: serializeSosRequest(sosRequest),
@@ -449,11 +497,17 @@ async function listNearbySosRequests(query, volunteerId) {
   };
 }
 
-async function respondToSosRequest(requestId, volunteerId) {
+async function respondToSosRequest(requestId, actor) {
+  if (!hasPermission(actor, 'emergencies:manage')) {
+    throw new AppError('ليس لديك صلاحية الاستجابة لبلاغات الطوارئ', 403);
+  }
   const parsedRequestId = parsePositiveInteger(requestId, 'معرف الاستغاثة');
   const existingRequest = await getSosRequestOrThrow(parsedRequestId);
 
-  if (existingRequest.volunteerId === volunteerId) {
+  if (
+    actor.accountType !== 'ADMIN' &&
+    existingRequest.volunteerId === actor.id
+  ) {
     throw new AppError('لا يمكنك الاستجابة لطلب الاستغاثة الخاص بك', 400);
   }
 
@@ -461,24 +515,7 @@ async function respondToSosRequest(requestId, volunteerId) {
     throw new AppError('طلب الاستغاثة لم يعد نشطًا', 409);
   }
 
-  if (existingRequest.status === 'OPEN') {
-    await prisma.sosRequest.updateMany({
-      where: {
-        id: parsedRequestId,
-        status: 'OPEN',
-      },
-      data: {
-        status: 'RESPONDED',
-      },
-    });
-  }
-
-  const sosRequest = await getSosRequestOrThrow(parsedRequestId);
-
-  return {
-    message: 'تم تسجيل استجابتك لطلب الاستغاثة',
-    request: serializeSosRequest(sosRequest),
-  };
+  return updateSosRequestStatus(parsedRequestId, { status: 'RESPONDED' }, actor);
 }
 
 module.exports = {

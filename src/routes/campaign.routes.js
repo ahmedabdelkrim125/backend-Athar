@@ -1,15 +1,14 @@
 const express = require('express');
 
 const campaignController = require('../controllers/campaign.controller');
-const { requireAuth } = require('../middleware/auth.middleware');
+const { requireAccountAuth } = require('../middleware/account-auth.middleware');
+const { requireAdminAuth } = require('../middleware/admin-auth.middleware');
 
 const router = express.Router();
 
-router.use(requireAuth);
-
-router.get('/', campaignController.listCampaigns);
-router.post('/', campaignController.createCampaign);
-router.get('/:campaignId', campaignController.getCampaignById);
-router.patch('/:campaignId', campaignController.updateCampaign);
+router.get('/', requireAccountAuth, campaignController.listCampaigns);
+router.post('/', requireAdminAuth, campaignController.createCampaign);
+router.get('/:campaignId', requireAccountAuth, campaignController.getCampaignById);
+router.patch('/:campaignId', requireAdminAuth, campaignController.updateCampaign);
 
 module.exports = router;

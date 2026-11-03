@@ -1,13 +1,11 @@
 const express = require('express');
 
 const demoAdminController = require('../controllers/demo-admin.controller');
-const { requireAuth } = require('../middleware/auth.middleware');
-const { requireDemoAdmin } = require('../middleware/demo-admin.middleware');
+const { requireAdminAuth } = require('../middleware/admin-auth.middleware');
 
 const router = express.Router();
 
-router.use(requireAuth);
-router.use(requireDemoAdmin);
+router.use(requireAdminAuth);
 
 router.get('/overview', demoAdminController.getOverview);
 router.post('/seed', demoAdminController.seedAllVolunteers);

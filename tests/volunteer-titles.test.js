@@ -85,7 +85,14 @@ function completedVolunteer(id, points) {
     points,
     totalHours: 1,
     joinDate: new Date('2026-01-01T00:00:00.000Z'),
-    reports: [{ id: id, campaignId: id, createdAt: new Date('2026-01-02T00:00:00.000Z') }],
+    reports: [
+      {
+        id: id,
+        campaignId: id,
+        createdAt: new Date('2026-01-02T00:00:00.000Z'),
+        approvalStatus: 'APPROVED',
+      },
+    ],
     assignedTasks: [
       {
         id,
