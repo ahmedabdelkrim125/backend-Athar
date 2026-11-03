@@ -1,6 +1,8 @@
 const prisma = require('../lib/prisma');
 const AppError = require('../utils/app-error');
 const { serializeBadge } = require('../utils/serializers');
+const { listVolunteerTitles } = require('./volunteer-title.service');
+const { resolveVolunteerTitle } = require('../utils/volunteer-titles');
 const {
   buildAchievementCatalog,
   buildAvatarUrl,
@@ -183,7 +185,10 @@ async function loadMissionsSummary(volunteerId) {
 }
 
 async function getProfileDashboard(volunteerId) {
-  const volunteers = await loadVolunteers();
+  const [volunteers, volunteerTitles] = await Promise.all([
+    loadVolunteers(),
+    listVolunteerTitles(),
+  ]);
   const currentVolunteer = volunteers.find((volunteer) => volunteer.id === volunteerId);
 
   if (!currentVolunteer) {
@@ -194,6 +199,7 @@ async function getProfileDashboard(volunteerId) {
   const weeklyRows = buildLeaderboardRows(volunteers, {
     currentVolunteerId: volunteerId,
     period: 'weekly',
+    titles: volunteerTitles,
   });
   const leaderboard = buildLeaderboardPayload(weeklyRows, volunteerId);
   const achievements = buildAchievementCatalog(overallMetrics, {
@@ -201,7 +207,7 @@ async function getProfileDashboard(volunteerId) {
   });
   const certificates = buildCertificates(overallMetrics, achievements, currentVolunteer);
   const displayTotalHours = Number(currentVolunteer.totalHours) || overallMetrics.totalHours;
-  const displayPoints = Number(currentVolunteer.points) || overallMetrics.score;
+  const displayPoints = Number(currentVolunteer.points) || 0;
   const recognition = buildHoursRecognition(displayTotalHours);
   const missionsSummary = await loadMissionsSummary(volunteerId);
 
@@ -229,6 +235,13 @@ async function getProfileDashboard(volunteerId) {
         badgesCount: achievements.filter((achievement) => achievement.unlocked).length,
         certificatesCount: certificates.length,
       },
+      volunteerTitle: resolveVolunteerTitle(
+        {
+          ...overallMetrics,
+          points: currentVolunteer.points,
+        },
+        volunteerTitles,
+      ),
       recognition,
       leaderboard: {
         period: 'weekly',
@@ -284,7 +297,10 @@ async function getProfileRecognition(volunteerId) {
 }
 
 async function getLeaderboard(volunteerId, periodValue) {
-  const volunteers = await loadVolunteers();
+  const [volunteers, volunteerTitles] = await Promise.all([
+    loadVolunteers(),
+    listVolunteerTitles(),
+  ]);
   const currentVolunteer = volunteers.find((volunteer) => volunteer.id === volunteerId);
 
   if (!currentVolunteer) {
@@ -295,6 +311,7 @@ async function getLeaderboard(volunteerId, periodValue) {
   const rows = buildLeaderboardRows(volunteers, {
     currentVolunteerId: volunteerId,
     period,
+    titles: volunteerTitles,
   });
 
   return {

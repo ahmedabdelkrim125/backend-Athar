@@ -15,6 +15,35 @@ npm run dev
 
 Production uses committed migrations from `prisma/migrations` via `npm run prisma:deploy`.
 
+## Volunteer titles
+
+The `VolunteerTitle` table stores five editable title levels and their minimum
+requirements for lifetime points, volunteer hours, completed tasks, and reports.
+Every requirement for a level must be met. Titles are derived from current volunteer
+records when the profile or leaderboard is read, so title changes do not require a
+separate write or background sync. The leaderboard keeps its existing score formula
+for ordering, returns actual earned `points`, and provides `rank` and `volunteerTitle`
+as separate fields.
+
+The migration inserts the default levels. To add any missing defaults without
+overwriting thresholds edited in the database, run:
+
+```bash
+npm run prisma:deploy
+npm run prisma:generate
+npm run seed:volunteer-titles
+```
+
+Default minimum requirements (all columns are editable in `volunteer_titles`):
+
+| Level | Title | Points | Hours | Completed tasks | Reports |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1 | متطوع مبتدئ | 0 | 0 | 0 | 0 |
+| 2 | صانع الخير | 100 | 1 | 1 | 1 |
+| 3 | متطوع متميز | 300 | 10 | 5 | 5 |
+| 4 | قائد الأثر | 750 | 30 | 20 | 15 |
+| 5 | سفير أثر | 1500 | 100 | 50 | 40 |
+
 ## Required env
 
 - `DATABASE_URL`

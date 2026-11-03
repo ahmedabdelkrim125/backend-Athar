@@ -166,8 +166,10 @@
                   "});",
                   "if (body.success === true && typeof body.accessToken === \"string\") {",
                   "  pm.collectionVariables.set(\"token\", body.accessToken);",
+                  "  pm.environment.set(\"token\", body.accessToken);",
                   "  if (typeof body.refreshToken === \"string\") {",
                   "    pm.collectionVariables.set(\"refreshToken\", body.refreshToken);",
+                  "    pm.environment.set(\"refreshToken\", body.refreshToken);",
                   "  }",
                   "}"
                 ]

@@ -3,6 +3,7 @@ const NEWS_IMAGE_URLS = [
   'https://images.unsplash.com/photo-1488521787991-ed7bbaae773c?auto=format&fit=crop&w=1200&q=80',
   'https://images.unsplash.com/photo-1517457373958-b7bdd4587205?auto=format&fit=crop&w=1200&q=80',
 ];
+const { resolveVolunteerTitle } = require('./volunteer-titles');
 
 const HOURS_RECOGNITION_LEVELS = [
   {
@@ -225,6 +226,9 @@ function collectVolunteerMetrics(volunteer, options = {}) {
   const completedAssignments = filteredAssignments.filter((assignment) =>
     ['CHECKED_OUT', 'COMPLETED'].includes(assignment.status),
   );
+  const completedTasksCount = filteredAssignments.filter(
+    (assignment) => assignment.status === 'COMPLETED',
+  ).length;
   const checkedInAssignments = filteredAssignments.filter((assignment) =>
     ['CHECKED_IN', 'CHECKED_OUT', 'COMPLETED'].includes(assignment.status),
   );
@@ -269,6 +273,7 @@ function collectVolunteerMetrics(volunteer, options = {}) {
     badgesCount,
     completedCampaigns,
     completedAssignmentsCount,
+    completedTasksCount,
     checkedInAssignmentsCount: checkedInAssignments.length,
     score,
   };
@@ -280,6 +285,10 @@ function buildLeaderboardRows(volunteers, options = {}) {
   const rows = volunteers
     .map((volunteer) => {
       const metrics = collectVolunteerMetrics(volunteer, { period });
+      const lifetimeMetrics =
+        period === 'all'
+          ? metrics
+          : collectVolunteerMetrics(volunteer, { period: 'all' });
 
       return {
         id: volunteer.id,
@@ -289,6 +298,14 @@ function buildLeaderboardRows(volunteers, options = {}) {
         status: volunteer.status,
         joinDate: volunteer.joinDate,
         createdAt: volunteer.createdAt,
+        actualPoints: Number(volunteer.points) || 0,
+        volunteerTitle: resolveVolunteerTitle(
+          {
+            ...lifetimeMetrics,
+            points: volunteer.points,
+          },
+          options.titles,
+        ),
         metrics,
       };
     })
@@ -309,10 +326,11 @@ function buildLeaderboardRows(volunteers, options = {}) {
       avatarUrl: row.avatarUrl,
       isCurrentUser: row.isCurrentUser,
       status: row.status,
-      points: row.metrics.score,
+      points: row.actualPoints,
       totalHours: row.metrics.totalHours,
       completedCampaigns: row.metrics.completedCampaigns,
       reportsCount: row.metrics.reportsCount,
+      volunteerTitle: row.volunteerTitle,
     }));
 
   return rows;
