@@ -1,3 +1,22 @@
-INSERT INTO badges (name, description, points_required) VALUES ('شارة الدعم', 'تمنح عند إتمام مهمة مرافقة ودعم المتعافين', 99999);
-UPDATE tasks SET duration_hours = 4, reward_badge_id = (SELECT id FROM badges WHERE name = 'شارة الدعم') WHERE id = 3;
-UPDATE campaigns SET attendance_points = 30, report_points = 50 WHERE id = 2;
+SELECT
+    t.id,
+    t.title,
+    t.duration_hours,
+    t.reward_badge_id,
+    b.name AS badge_name
+FROM tasks t
+LEFT JOIN badges b ON b.id = t.reward_badge_id
+WHERE t.id = 3;
+
+SELECT
+    id,
+    title,
+    attendance_points,
+    report_points,
+    (attendance_points + report_points) AS total_points
+FROM campaigns
+WHERE id = 2;
+
+SELECT *
+FROM badges
+WHERE name = 'شارة الدعم';
