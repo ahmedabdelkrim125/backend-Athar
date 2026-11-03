@@ -14,10 +14,12 @@ const chatbotRoutes = require('./chatbot.routes');
 const communityRoutes = require('./community.routes');
 const demoAdminRoutes = require('./demo-admin.routes');
 const homeRoutes = require('./home.routes');
+const missionRoutes = require('./mission.routes');
 const profileRoutes = require('./profile.routes');
 const reportRoutes = require('./report.routes');
 const sosRequestRoutes = require('./sos-request.routes');
 const taskRoutes = require('./task.routes');
+const uploadRoutes = require('./upload.routes');
 
 const router = express.Router();
 const apiRelease = '2026-04-06-sos-recognition-v1';
@@ -82,6 +84,8 @@ router.use('/reports', reportRoutes);
 router.use('/sos-requests', sosRequestRoutes);
 router.use('/community', communityRoutes);
 router.use('/chatbot', chatbotRoutes);
+router.use('/missions', missionRoutes);
+router.use('/uploads', uploadRoutes);
 router.use('/demo-admin', demoAdminRoutes);
 
 module.exports = router;

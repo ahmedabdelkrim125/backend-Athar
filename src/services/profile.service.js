@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const AppError = require('../utils/app-error');
+const { serializeBadge } = require('../utils/serializers');
 const {
   buildAchievementCatalog,
   buildAvatarUrl,
@@ -90,6 +91,97 @@ async function loadVolunteers() {
   });
 }
 
+async function loadMissionsSummary(volunteerId) {
+  const completedWhere = {
+    volunteerId,
+    status: 'COMPLETED',
+  };
+
+  const [completedAssignments, completedTotals, volunteerBadges] = await Promise.all([
+    prisma.volunteerTask.findMany({
+      where: completedWhere,
+      orderBy: [{ checkOutTime: 'desc' }, { id: 'desc' }],
+      take: 50,
+      include: {
+        task: {
+          select: {
+            id: true,
+            title: true,
+            date: true,
+            rewardBadge: true,
+            campaign: {
+              select: {
+                id: true,
+                title: true,
+              },
+            },
+            reports: {
+              where: {
+                volunteerId,
+              },
+              select: {
+                pointsAwarded: true,
+                createdAt: true,
+              },
+              take: 1,
+            },
+          },
+        },
+      },
+    }),
+    prisma.volunteerTask.aggregate({
+      where: completedWhere,
+      _count: true,
+      _sum: {
+        hoursWorked: true,
+      },
+    }),
+    prisma.volunteerBadge.findMany({
+      where: {
+        volunteerId,
+      },
+      include: {
+        badge: true,
+      },
+      orderBy: {
+        awardedAt: 'desc',
+      },
+    }),
+  ]);
+
+  const missionItems = completedAssignments.map((assignment) => {
+    const report = assignment.task.reports?.[0] ?? null;
+    const completedAt = assignment.checkOutTime || report?.createdAt || null;
+
+    return {
+      taskId: assignment.task.id,
+      title: assignment.task.title,
+      campaignId: assignment.task.campaign?.id ?? null,
+      campaignTitle: assignment.task.campaign?.title ?? null,
+      date: assignment.task.date ? assignment.task.date.toISOString().slice(0, 10) : null,
+      completedAt: completedAt ? completedAt.toISOString() : null,
+      hoursWorked: assignment.hoursWorked,
+      pointsEarned: (assignment.attendancePointsAwarded ?? 0) + (report?.pointsAwarded ?? 0),
+      badge: serializeBadge(assignment.task.rewardBadge),
+    };
+  });
+
+  return {
+    missions: {
+      completedCount: completedTotals._count ?? 0,
+      totalHours: completedTotals._sum?.hoursWorked ?? 0,
+      items: missionItems,
+    },
+    badges: {
+      count: volunteerBadges.length,
+      items: volunteerBadges.map((volunteerBadge) => ({
+        ...serializeBadge(volunteerBadge.badge),
+        awardedAt: volunteerBadge.awardedAt.toISOString(),
+      })),
+    },
+  };
+}
+
 async function getProfileDashboard(volunteerId) {
   const volunteers = await loadVolunteers();
   const currentVolunteer = volunteers.find((volunteer) => volunteer.id === volunteerId);
@@ -111,6 +203,7 @@ async function getProfileDashboard(volunteerId) {
   const displayTotalHours = Number(currentVolunteer.totalHours) || overallMetrics.totalHours;
   const displayPoints = Number(currentVolunteer.points) || overallMetrics.score;
   const recognition = buildHoursRecognition(displayTotalHours);
+  const missionsSummary = await loadMissionsSummary(volunteerId);
 
   return {
     message: 'تم جلب بيانات الحساب بنجاح',
@@ -132,6 +225,7 @@ async function getProfileDashboard(volunteerId) {
         totalHours: displayTotalHours,
         points: displayPoints,
         campaignsCompleted: overallMetrics.completedCampaigns,
+        missionsCompleted: missionsSummary.missions.completedCount,
         badgesCount: achievements.filter((achievement) => achievement.unlocked).length,
         certificatesCount: certificates.length,
       },
@@ -149,6 +243,8 @@ async function getProfileDashboard(volunteerId) {
         count: certificates.length,
         items: certificates,
       },
+      missions: missionsSummary.missions,
+      badges: missionsSummary.badges,
     },
   };
 }

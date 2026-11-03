@@ -145,9 +145,12 @@ model Task {
   endTime        DateTime?        @map("end_time") @db.Time(0)
   locationId     Int              @map("location_id")
   attendanceRadiusMeters Int?     @map("attendance_radius_meters")
+  durationHours  Int?             @map("duration_hours")
+  rewardBadgeId  Int?             @map("reward_badge_id")
   status         TaskStatus       @default(OPEN)
   campaign       Campaign         @relation(fields: [campaignId], references: [id])
   location       Location         @relation(fields: [locationId], references: [id])
+  rewardBadge    Badge?           @relation(fields: [rewardBadgeId], references: [id])
   reports        Report[]
   volunteerTasks VolunteerTask[]
 
@@ -227,6 +230,7 @@ model Badge {
   description     String           @db.Text
   pointsRequired  Int              @map("points_required")
   volunteerBadges VolunteerBadge[]
+  rewardTasks     Task[]
 
   @@map("badges")
 }

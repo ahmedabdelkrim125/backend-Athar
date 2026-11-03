@@ -1,6 +1,6 @@
 const prisma = require('../lib/prisma');
 const AppError = require('../utils/app-error');
-const { syncVolunteerBadges } = require('./reward.service');
+const { awardBadgeById, syncVolunteerBadges } = require('./reward.service');
 const { syncTaskStatusFromAssignments } = require('./task-assignment.service');
 const {
   serializePagination,
@@ -255,42 +255,57 @@ async function createReport(payload, volunteerId) {
     throw new AppError('لا يمكن إرسال تقرير لمهمة تم إلغاؤها لك', 400);
   }
 
-  const result = await prisma.$transaction(async (transactionClient) => {
-    const report = await transactionClient.report.create({
-      data: {
-        volunteerId,
-        taskId: task.id,
-        campaignId: task.campaignId,
-        notes: validatedPayload.notes,
-        voiceNote: validatedPayload.voiceNote,
-        images: validatedPayload.images || [],
-        rating: validatedPayload.rating,
-        pointsAwarded,
-      },
-      include: reportInclude,
-    });
+  if (assignment && assignment.status === 'ASSIGNED') {
+    throw new AppError('يجب تسجيل الحضور في المهمة قبل إرسال التقرير', 400);
+  }
 
-    let hoursAdded = 0;
+  let result;
 
-    if (assignment) {
-      const plannedHours = assignment.hoursWorked || calculateTaskDurationHours(task);
-      hoursAdded = Math.max(0, plannedHours - assignment.hoursWorked);
-
-      await transactionClient.volunteerTask.update({
-        where: {
-          volunteerId_taskId: {
-            volunteerId,
-            taskId: task.id,
-          },
-        },
+  try {
+    result = await prisma.$transaction(async (transactionClient) => {
+      const report = await transactionClient.report.create({
         data: {
-          status: 'COMPLETED',
-          checkOutTime: assignment.checkOutTime || new Date(),
-          hoursWorked: assignment.hoursWorked || plannedHours,
+          volunteerId,
+          taskId: task.id,
+          campaignId: task.campaignId,
+          notes: validatedPayload.notes,
+          voiceNote: validatedPayload.voiceNote,
+          images: validatedPayload.images || [],
+          rating: validatedPayload.rating,
+          pointsAwarded,
         },
+        include: reportInclude,
       });
 
-      await syncTaskStatusFromAssignments(transactionClient, task.id);
+      let hoursAdded = 0;
+      let missionBadge = null;
+
+      if (assignment) {
+        const plannedHours = assignment.hoursWorked || calculateTaskDurationHours(task);
+        hoursAdded = Math.max(0, plannedHours - assignment.hoursWorked);
+
+        await transactionClient.volunteerTask.update({
+          where: {
+            volunteerId_taskId: {
+              volunteerId,
+              taskId: task.id,
+            },
+          },
+          data: {
+            status: 'COMPLETED',
+            checkOutTime: assignment.checkOutTime || new Date(),
+            hoursWorked: assignment.hoursWorked || plannedHours,
+          },
+        });
+
+        await syncTaskStatusFromAssignments(transactionClient, task.id);
+
+        missionBadge = await awardBadgeById(
+          transactionClient,
+          volunteerId,
+          task.rewardBadgeId,
+        );
+      }
 
       const volunteer = await transactionClient.volunteer.update({
         where: {
@@ -310,46 +325,22 @@ async function createReport(payload, volunteerId) {
         },
       });
 
-      const newlyAwardedBadges = await syncVolunteerBadges(
-        transactionClient,
-        volunteerId,
-      );
+      const pointsBadges = await syncVolunteerBadges(transactionClient, volunteerId);
 
       return {
         report,
         hoursAdded,
         volunteer,
-        newlyAwardedBadges,
+        newlyAwardedBadges: missionBadge ? [missionBadge, ...pointsBadges] : pointsBadges,
       };
+    });
+  } catch (error) {
+    if (error?.code === 'P2002') {
+      throw new AppError('تم إرسال تقرير لهذه المهمة من قبل', 409);
     }
 
-    const volunteer = await transactionClient.volunteer.update({
-      where: {
-        id: volunteerId,
-      },
-      data: {
-        points: {
-          increment: pointsAwarded,
-        },
-      },
-      select: {
-        points: true,
-        totalHours: true,
-      },
-    });
-
-    const newlyAwardedBadges = await syncVolunteerBadges(
-      transactionClient,
-      volunteerId,
-    );
-
-    return {
-      report,
-      hoursAdded,
-      volunteer,
-      newlyAwardedBadges,
-    };
-  });
+    throw error;
+  }
 
   return {
     message: 'تم إنشاء التقرير بنجاح',

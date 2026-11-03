@@ -3,6 +3,12 @@ function getTaskAttendanceRadius(task) {
 }
 
 function calculateTaskDurationHours(task) {
+  const explicitHours = Number(task?.durationHours);
+
+  if (Number.isInteger(explicitHours) && explicitHours > 0) {
+    return explicitHours;
+  }
+
   if (!task?.startTime || !task?.endTime) {
     return 1;
   }

@@ -96,7 +96,49 @@ async function syncVolunteerBadges(dbClient, volunteerId) {
   return newlyAwardedBadges;
 }
 
+async function awardBadgeById(dbClient, volunteerId, badgeId) {
+  if (!badgeId) {
+    return null;
+  }
+
+  const badge = await dbClient.badge.findUnique({
+    where: {
+      id: badgeId,
+    },
+  });
+
+  if (!badge) {
+    return null;
+  }
+
+  const existingVolunteerBadge = await dbClient.volunteerBadge.findUnique({
+    where: {
+      volunteerId_badgeId: {
+        volunteerId,
+        badgeId,
+      },
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (existingVolunteerBadge) {
+    return null;
+  }
+
+  await dbClient.volunteerBadge.create({
+    data: {
+      volunteerId,
+      badgeId,
+    },
+  });
+
+  return serializeBadge(badge);
+}
+
 module.exports = {
+  awardBadgeById,
   ensureDefaultBadges,
   syncVolunteerBadges,
 };
