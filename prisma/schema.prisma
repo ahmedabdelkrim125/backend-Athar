@@ -7,6 +7,282 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Volunteer {
+  id               Int                    @id @default(autoincrement())
+  fullName         String                 @map("full_name")
+  nationalId       String                 @unique @map("national_id")
+  email            String                 @unique
+  phone            String                 @unique
+  passwordHash     String                 @map("password_hash")
+  gender           Gender?
+  dateOfBirth      DateTime?              @map("date_of_birth") @db.Date
+  city             String?
+  joinDate         DateTime               @default(now()) @map("join_date")
+  status           VolunteerStatus        @default(PENDING)
+  totalHours       Int                    @default(0) @map("total_hours")
+  points           Int                    @default(0)
+  createdAt        DateTime               @default(now()) @map("created_at")
+  avatarUrl        String?                @map("avatar_url")
+  authSessions     AuthSession[]
+  campaignsCreated Campaign[]             @relation("CampaignCreator")
+  postComments     CommunityPostComment[]
+  postLikes        CommunityPostLike[]
+  communityPosts   CommunityPost[]
+  reports          Report[]
+  sosRequests      SosRequest[]
+  volunteerBadges  VolunteerBadge[]
+  ratingsGiven     VolunteerRating[]      @relation("RatingLeader")
+  ratingsReceived  VolunteerRating[]      @relation("RatedVolunteer")
+  assignedTasks    VolunteerTask[]
+
+  @@map("volunteers")
+}
+
+model AuthSession {
+  id               Int       @id @default(autoincrement())
+  volunteerId      Int       @map("volunteer_id")
+  refreshTokenHash String?   @unique @map("refresh_token_hash")
+  userAgent        String?   @map("user_agent") @db.VarChar(512)
+  ipAddress        String?   @map("ip_address") @db.VarChar(64)
+  expiresAt        DateTime  @map("expires_at")
+  revokedAt        DateTime? @map("revoked_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  volunteer        Volunteer @relation(fields: [volunteerId], references: [id])
+
+  @@index([volunteerId])
+  @@map("auth_sessions")
+}
+
+model Location {
+  id        Int        @id @default(autoincrement())
+  name      String
+  latitude  Decimal    @db.Decimal(10, 7)
+  longitude Decimal    @db.Decimal(10, 7)
+  city      String
+  area      String
+  campaigns Campaign[]
+  tasks     Task[]
+
+  @@map("locations")
+}
+
+model Campaign {
+  id                     Int               @id @default(autoincrement())
+  title                  String
+  description            String            @db.Text
+  startDate              DateTime          @map("start_date")
+  endDate                DateTime          @map("end_date")
+  locationId             Int               @map("location_id")
+  createdById            Int               @map("created_by")
+  status                 CampaignStatus    @default(DRAFT)
+  coverImage             String?           @map("cover_image")
+  attendanceRadiusMeters Int               @default(100) @map("attendance_radius_meters")
+  attendancePoints       Int               @default(50) @map("attendance_points")
+  reportPoints           Int               @default(50) @map("report_points")
+  startTime              DateTime?         @map("start_time") @db.Time(0)
+  endTime                DateTime?         @map("end_time") @db.Time(0)
+  createdBy              Volunteer         @relation("CampaignCreator", fields: [createdById], references: [id])
+  location               Location          @relation(fields: [locationId], references: [id])
+  reports                Report[]
+  tasks                  Task[]
+  ratings                VolunteerRating[]
+
+  @@index([createdById], map: "campaigns_created_by_fkey")
+  @@index([locationId], map: "campaigns_location_id_fkey")
+  @@map("campaigns")
+}
+
+model Task {
+  id                     Int             @id @default(autoincrement())
+  title                  String
+  description            String          @db.Text
+  campaignId             Int             @map("campaign_id")
+  date                   DateTime        @db.Date
+  startTime              DateTime?       @map("start_time") @db.Time(0)
+  endTime                DateTime?       @map("end_time") @db.Time(0)
+  locationId             Int             @map("location_id")
+  status                 TaskStatus      @default(OPEN)
+  attendanceRadiusMeters Int?            @map("attendance_radius_meters")
+  durationHours          Int?            @map("duration_hours")
+  rewardBadgeId          Int?            @map("reward_badge_id")
+  reports                Report[]
+  campaign               Campaign        @relation(fields: [campaignId], references: [id])
+  location               Location        @relation(fields: [locationId], references: [id])
+  rewardBadge            Badge?          @relation(fields: [rewardBadgeId], references: [id])
+  volunteerTasks         VolunteerTask[]
+
+  @@index([campaignId], map: "tasks_campaign_id_fkey")
+  @@index([locationId], map: "tasks_location_id_fkey")
+  @@index([rewardBadgeId], map: "tasks_reward_badge_id_fkey")
+  @@map("tasks")
+}
+
+model Report {
+  id            Int       @id @default(autoincrement())
+  volunteerId   Int       @map("volunteer_id")
+  taskId        Int       @map("task_id")
+  campaignId    Int       @map("campaign_id")
+  notes         String?   @db.Text
+  voiceNote     String?   @map("voice_note")
+  images        Json?
+  rating        Int?
+  createdAt     DateTime  @default(now()) @map("created_at")
+  pointsAwarded Int       @default(0) @map("points_awarded")
+  campaign      Campaign  @relation(fields: [campaignId], references: [id])
+  task          Task      @relation(fields: [taskId], references: [id])
+  volunteer     Volunteer @relation(fields: [volunteerId], references: [id])
+
+  @@unique([volunteerId, taskId])
+  @@index([campaignId], map: "reports_campaign_id_fkey")
+  @@index([taskId], map: "reports_task_id_fkey")
+  @@map("reports")
+}
+
+model VolunteerTask {
+  id                      Int                 @id @default(autoincrement())
+  volunteerId             Int                 @map("volunteer_id")
+  taskId                  Int                 @map("task_id")
+  status                  VolunteerTaskStatus @default(ASSIGNED)
+  checkInTime             DateTime?           @map("check_in_time")
+  checkOutTime            DateTime?           @map("check_out_time")
+  hoursWorked             Int                 @default(0) @map("hours_worked")
+  checkInLatitude         Decimal?            @map("check_in_latitude") @db.Decimal(10, 7)
+  checkInLongitude        Decimal?            @map("check_in_longitude") @db.Decimal(10, 7)
+  checkOutLatitude        Decimal?            @map("check_out_latitude") @db.Decimal(10, 7)
+  checkOutLongitude       Decimal?            @map("check_out_longitude") @db.Decimal(10, 7)
+  attendancePointsAwarded Int                 @default(0) @map("attendance_points_awarded")
+  task                    Task                @relation(fields: [taskId], references: [id])
+  volunteer               Volunteer           @relation(fields: [volunteerId], references: [id])
+
+  @@unique([volunteerId, taskId])
+  @@index([taskId], map: "volunteer_tasks_task_id_fkey")
+  @@map("volunteer_tasks")
+}
+
+model VolunteerRating {
+  id          Int        @id @default(autoincrement())
+  volunteerId Int        @map("volunteer_id")
+  leaderId    Int?       @map("leader_id")
+  campaignId  Int?       @map("campaign_id")
+  rating      Int
+  feedback    String?    @db.Text
+  createdAt   DateTime   @default(now()) @map("created_at")
+  campaign    Campaign?  @relation(fields: [campaignId], references: [id])
+  leader      Volunteer? @relation("RatingLeader", fields: [leaderId], references: [id])
+  volunteer   Volunteer  @relation("RatedVolunteer", fields: [volunteerId], references: [id])
+
+  @@index([campaignId], map: "volunteer_ratings_campaign_id_fkey")
+  @@index([leaderId], map: "volunteer_ratings_leader_id_fkey")
+  @@index([volunteerId], map: "volunteer_ratings_volunteer_id_fkey")
+  @@map("volunteer_ratings")
+}
+
+model SosRequest {
+  id          Int              @id @default(autoincrement())
+  volunteerId Int              @map("volunteer_id")
+  latitude    Decimal          @db.Decimal(10, 7)
+  longitude   Decimal          @db.Decimal(10, 7)
+  status      SosRequestStatus @default(OPEN)
+  createdAt   DateTime         @default(now()) @map("created_at")
+  resolvedAt  DateTime?        @map("resolved_at")
+  volunteer   Volunteer        @relation(fields: [volunteerId], references: [id])
+
+  @@index([volunteerId], map: "sos_requests_volunteer_id_fkey")
+  @@map("sos_requests")
+}
+
+model Badge {
+  id              Int              @id @default(autoincrement())
+  name            String           @unique
+  description     String           @db.Text
+  pointsRequired  Int              @map("points_required")
+  rewardTasks     Task[]
+  volunteerBadges VolunteerBadge[]
+
+  @@map("badges")
+}
+
+model VolunteerTitle {
+  id                Int    @id @default(autoincrement())
+  name              String @unique
+  level             Int    @unique
+  description       String @db.Text
+  icon              String
+  minPoints         Int    @default(0) @map("min_points")
+  minHours          Int    @default(0) @map("min_hours")
+  minCompletedTasks Int    @default(0) @map("min_completed_tasks")
+  minReports        Int    @default(0) @map("min_reports")
+
+  @@map("volunteer_titles")
+}
+
+model VolunteerBadge {
+  id          Int       @id @default(autoincrement())
+  volunteerId Int       @map("volunteer_id")
+  badgeId     Int       @map("badge_id")
+  awardedAt   DateTime  @default(now()) @map("awarded_at")
+  badge       Badge     @relation(fields: [badgeId], references: [id])
+  volunteer   Volunteer @relation(fields: [volunteerId], references: [id])
+
+  @@unique([volunteerId, badgeId])
+  @@index([badgeId], map: "volunteer_badges_badge_id_fkey")
+  @@map("volunteer_badges")
+}
+
+model Announcement {
+  id        Int      @id @default(autoincrement())
+  title     String
+  content   String   @db.Text
+  image     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  isPinned  Boolean  @default(false) @map("is_pinned")
+
+  @@map("announcements")
+}
+
+model CommunityPost {
+  id          Int                    @id @default(autoincrement())
+  volunteerId Int                    @map("volunteer_id")
+  content     String                 @db.Text
+  image       String?
+  createdAt   DateTime               @default(now()) @map("created_at")
+  updatedAt   DateTime               @updatedAt @map("updated_at")
+  comments    CommunityPostComment[]
+  likes       CommunityPostLike[]
+  volunteer   Volunteer              @relation(fields: [volunteerId], references: [id])
+
+  @@index([volunteerId])
+  @@map("community_posts")
+}
+
+model CommunityPostComment {
+  id          Int           @id @default(autoincrement())
+  postId      Int           @map("post_id")
+  volunteerId Int           @map("volunteer_id")
+  content     String        @db.Text
+  createdAt   DateTime      @default(now()) @map("created_at")
+  post        CommunityPost @relation(fields: [postId], references: [id])
+  volunteer   Volunteer     @relation(fields: [volunteerId], references: [id])
+
+  @@index([postId])
+  @@index([volunteerId])
+  @@map("community_post_comments")
+}
+
+model CommunityPostLike {
+  id          Int           @id @default(autoincrement())
+  postId      Int           @map("post_id")
+  volunteerId Int           @map("volunteer_id")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  post        CommunityPost @relation(fields: [postId], references: [id])
+  volunteer   Volunteer     @relation(fields: [volunteerId], references: [id])
+
+  @@unique([postId, volunteerId])
+  @@index([volunteerId])
+  @@map("community_post_likes")
+}
+
 enum Gender {
   MALE
   FEMALE
@@ -49,267 +325,4 @@ enum SosRequestStatus {
   RESPONDED
   RESOLVED
   CANCELLED
-}
-
-model Volunteer {
-  id               Int                    @id @default(autoincrement())
-  fullName         String                 @map("full_name")
-  nationalId       String                 @unique @map("national_id")
-  email            String                 @unique
-  phone            String                 @unique
-  passwordHash     String                 @map("password_hash")
-  gender           Gender?
-  dateOfBirth      DateTime?              @map("date_of_birth") @db.Date
-  city             String?
-  avatarUrl        String?                @map("avatar_url")
-  joinDate         DateTime               @default(now()) @map("join_date")
-  status           VolunteerStatus        @default(PENDING)
-  totalHours       Int                    @default(0) @map("total_hours")
-  points           Int                    @default(0)
-  createdAt        DateTime               @default(now()) @map("created_at")
-  campaignsCreated Campaign[]             @relation("CampaignCreator")
-  assignedTasks    VolunteerTask[]
-  reports          Report[]
-  sosRequests      SosRequest[]
-  ratingsReceived  VolunteerRating[]      @relation("RatedVolunteer")
-  ratingsGiven     VolunteerRating[]      @relation("RatingLeader")
-  volunteerBadges  VolunteerBadge[]
-  authSessions     AuthSession[]
-  communityPosts   CommunityPost[]
-  postComments     CommunityPostComment[]
-  postLikes        CommunityPostLike[]
-
-  @@map("volunteers")
-}
-
-model AuthSession {
-  id               Int       @id @default(autoincrement())
-  volunteerId      Int       @map("volunteer_id")
-  refreshTokenHash String?   @unique @map("refresh_token_hash")
-  userAgent        String?   @map("user_agent") @db.VarChar(512)
-  ipAddress        String?   @map("ip_address") @db.VarChar(64)
-  expiresAt        DateTime  @map("expires_at")
-  revokedAt        DateTime? @map("revoked_at")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
-  volunteer        Volunteer @relation(fields: [volunteerId], references: [id])
-
-  @@index([volunteerId])
-  @@map("auth_sessions")
-}
-
-model Location {
-  id        Int        @id @default(autoincrement())
-  name      String
-  latitude  Decimal    @db.Decimal(10, 7)
-  longitude Decimal    @db.Decimal(10, 7)
-  city      String
-  area      String
-  campaigns Campaign[]
-  tasks     Task[]
-
-  @@map("locations")
-}
-
-model Campaign {
-  id                     Int               @id @default(autoincrement())
-  title                  String
-  description            String            @db.Text
-  coverImage             String?           @map("cover_image")
-  startDate              DateTime          @map("start_date")
-  endDate                DateTime          @map("end_date")
-  startTime              DateTime?         @map("start_time") @db.Time(0)
-  endTime                DateTime?         @map("end_time") @db.Time(0)
-  locationId             Int               @map("location_id")
-  createdById            Int               @map("created_by")
-  status                 CampaignStatus    @default(DRAFT)
-  attendanceRadiusMeters Int               @default(100) @map("attendance_radius_meters")
-  attendancePoints       Int               @default(50) @map("attendance_points")
-  reportPoints           Int               @default(50) @map("report_points")
-  location               Location          @relation(fields: [locationId], references: [id])
-  createdBy              Volunteer         @relation("CampaignCreator", fields: [createdById], references: [id])
-  tasks                  Task[]
-  reports                Report[]
-  ratings                VolunteerRating[]
-
-  @@map("campaigns")
-}
-
-model Task {
-  id                     Int             @id @default(autoincrement())
-  title                  String
-  description            String          @db.Text
-  campaignId             Int             @map("campaign_id")
-  date                   DateTime        @db.Date
-  startTime              DateTime?       @map("start_time") @db.Time(0)
-  endTime                DateTime?       @map("end_time") @db.Time(0)
-  locationId             Int             @map("location_id")
-  attendanceRadiusMeters Int?            @map("attendance_radius_meters")
-  durationHours          Int?            @map("duration_hours")
-  rewardBadgeId          Int?            @map("reward_badge_id")
-  status                 TaskStatus      @default(OPEN)
-  campaign               Campaign        @relation(fields: [campaignId], references: [id])
-  location               Location        @relation(fields: [locationId], references: [id])
-  rewardBadge            Badge?          @relation(fields: [rewardBadgeId], references: [id])
-  reports                Report[]
-  volunteerTasks         VolunteerTask[]
-
-  @@map("tasks")
-}
-
-model Report {
-  id            Int       @id @default(autoincrement())
-  volunteerId   Int       @map("volunteer_id")
-  taskId        Int       @map("task_id")
-  campaignId    Int       @map("campaign_id")
-  notes         String?   @db.Text
-  voiceNote     String?   @map("voice_note")
-  images        Json?
-  rating        Int?
-  pointsAwarded Int       @default(0) @map("points_awarded")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  volunteer     Volunteer @relation(fields: [volunteerId], references: [id])
-  task          Task      @relation(fields: [taskId], references: [id])
-  campaign      Campaign  @relation(fields: [campaignId], references: [id])
-
-  @@unique([volunteerId, taskId])
-  @@map("reports")
-}
-
-model VolunteerTask {
-  id                      Int                 @id @default(autoincrement())
-  volunteerId             Int                 @map("volunteer_id")
-  taskId                  Int                 @map("task_id")
-  status                  VolunteerTaskStatus @default(ASSIGNED)
-  checkInTime             DateTime?           @map("check_in_time")
-  checkInLatitude         Decimal?            @map("check_in_latitude") @db.Decimal(10, 7)
-  checkInLongitude        Decimal?            @map("check_in_longitude") @db.Decimal(10, 7)
-  checkOutTime            DateTime?           @map("check_out_time")
-  checkOutLatitude        Decimal?            @map("check_out_latitude") @db.Decimal(10, 7)
-  checkOutLongitude       Decimal?            @map("check_out_longitude") @db.Decimal(10, 7)
-  hoursWorked             Int                 @default(0) @map("hours_worked")
-  attendancePointsAwarded Int                 @default(0) @map("attendance_points_awarded")
-  volunteer               Volunteer           @relation(fields: [volunteerId], references: [id])
-  task                    Task                @relation(fields: [taskId], references: [id])
-
-  @@unique([volunteerId, taskId])
-  @@map("volunteer_tasks")
-}
-
-model VolunteerRating {
-  id          Int        @id @default(autoincrement())
-  volunteerId Int        @map("volunteer_id")
-  leaderId    Int?       @map("leader_id")
-  campaignId  Int?       @map("campaign_id")
-  rating      Int
-  feedback    String?    @db.Text
-  createdAt   DateTime   @default(now()) @map("created_at")
-  volunteer   Volunteer  @relation("RatedVolunteer", fields: [volunteerId], references: [id])
-  leader      Volunteer? @relation("RatingLeader", fields: [leaderId], references: [id])
-  campaign    Campaign?  @relation(fields: [campaignId], references: [id])
-
-  @@map("volunteer_ratings")
-}
-
-model SosRequest {
-  id          Int              @id @default(autoincrement())
-  volunteerId Int              @map("volunteer_id")
-  latitude    Decimal          @db.Decimal(10, 7)
-  longitude   Decimal          @db.Decimal(10, 7)
-  status      SosRequestStatus @default(OPEN)
-  createdAt   DateTime         @default(now()) @map("created_at")
-  resolvedAt  DateTime?        @map("resolved_at")
-  volunteer   Volunteer        @relation(fields: [volunteerId], references: [id])
-
-  @@map("sos_requests")
-}
-
-model Badge {
-  id              Int              @id @default(autoincrement())
-  name            String           @unique
-  description     String           @db.Text
-  pointsRequired  Int              @map("points_required")
-  volunteerBadges VolunteerBadge[]
-  rewardTasks     Task[]
-
-  @@map("badges")
-}
-
-model VolunteerTitle {
-  id                Int    @id @default(autoincrement())
-  name              String @unique
-  level             Int    @unique
-  description       String @db.Text
-  icon              String
-  minPoints         Int    @default(0) @map("min_points")
-  minHours          Int    @default(0) @map("min_hours")
-  minCompletedTasks Int    @default(0) @map("min_completed_tasks")
-  minReports        Int    @default(0) @map("min_reports")
-
-  @@map("volunteer_titles")
-}
-
-model VolunteerBadge {
-  id          Int       @id @default(autoincrement())
-  volunteerId Int       @map("volunteer_id")
-  badgeId     Int       @map("badge_id")
-  awardedAt   DateTime  @default(now()) @map("awarded_at")
-  volunteer   Volunteer @relation(fields: [volunteerId], references: [id])
-  badge       Badge     @relation(fields: [badgeId], references: [id])
-
-  @@unique([volunteerId, badgeId])
-  @@map("volunteer_badges")
-}
-
-model Announcement {
-  id        Int      @id @default(autoincrement())
-  title     String
-  content   String   @db.Text
-  image     String?
-  isPinned  Boolean  @default(false) @map("is_pinned")
-  createdAt DateTime @default(now()) @map("created_at")
-
-  @@map("announcements")
-}
-
-model CommunityPost {
-  id          Int                    @id @default(autoincrement())
-  volunteerId Int                    @map("volunteer_id")
-  content     String                 @db.Text
-  image       String?
-  createdAt   DateTime               @default(now()) @map("created_at")
-  updatedAt   DateTime               @updatedAt @map("updated_at")
-  volunteer   Volunteer              @relation(fields: [volunteerId], references: [id])
-  comments    CommunityPostComment[]
-  likes       CommunityPostLike[]
-
-  @@index([volunteerId])
-  @@map("community_posts")
-}
-
-model CommunityPostComment {
-  id          Int           @id @default(autoincrement())
-  postId      Int           @map("post_id")
-  volunteerId Int           @map("volunteer_id")
-  content     String        @db.Text
-  createdAt   DateTime      @default(now()) @map("created_at")
-  post        CommunityPost @relation(fields: [postId], references: [id])
-  volunteer   Volunteer     @relation(fields: [volunteerId], references: [id])
-
-  @@index([postId])
-  @@index([volunteerId])
-  @@map("community_post_comments")
-}
-
-model CommunityPostLike {
-  id          Int           @id @default(autoincrement())
-  postId      Int           @map("post_id")
-  volunteerId Int           @map("volunteer_id")
-  createdAt   DateTime      @default(now()) @map("created_at")
-  post        CommunityPost @relation(fields: [postId], references: [id])
-  volunteer   Volunteer     @relation(fields: [volunteerId], references: [id])
-
-  @@unique([postId, volunteerId])
-  @@index([volunteerId])
-  @@map("community_post_likes")
 }
