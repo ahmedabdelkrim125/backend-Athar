@@ -43,7 +43,9 @@ ALTER TABLE `admin_auth_sessions`
 
 ALTER TABLE `campaigns`
     MODIFY COLUMN `created_by` INTEGER NULL,
-    DROP FOREIGN KEY `campaigns_created_by_fkey`,
+    DROP FOREIGN KEY `campaigns_created_by_fkey`;
+
+ALTER TABLE `campaigns`
     ADD COLUMN `created_by_admin_id` INTEGER NULL,
     ADD INDEX `campaigns_created_by_admin_id_idx` (`created_by_admin_id`),
     ADD CONSTRAINT `campaigns_created_by_fkey`
@@ -65,7 +67,9 @@ ALTER TABLE `reports`
 
 ALTER TABLE `report_review_audits`
     MODIFY COLUMN `reviewer_id` INTEGER NULL,
-    DROP FOREIGN KEY `report_review_audits_reviewer_id_fkey`,
+    DROP FOREIGN KEY `report_review_audits_reviewer_id_fkey`;
+
+ALTER TABLE `report_review_audits`
     ADD COLUMN `reviewer_admin_id` INTEGER NULL,
     ADD INDEX `report_review_audits_reviewer_admin_id_idx` (`reviewer_admin_id`),
     ADD CONSTRAINT `report_review_audits_reviewer_id_fkey`
@@ -118,7 +122,7 @@ ALTER TABLE `audit_logs`
 
 ALTER TABLE `volunteer_location_access_logs`
     ADD COLUMN `accessed_by_admin_id` INTEGER NULL,
-    ADD INDEX `volunteer_location_access_logs_admin_accessed_at_idx` (`accessed_by_admin_id`, `accessed_at`),
+    ADD INDEX `volunteer_location_access_logs_accessed_by_admin_id_accessed_idx` (`accessed_by_admin_id`, `accessed_at`),
     ADD CONSTRAINT `volunteer_location_access_logs_accessed_by_admin_id_fkey`
         FOREIGN KEY (`accessed_by_admin_id`) REFERENCES `admins`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
@@ -130,10 +134,6 @@ ALTER TABLE `notifications`
     ADD CONSTRAINT `notifications_admin_id_fkey`
         FOREIGN KEY (`admin_id`) REFERENCES `admins`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
-ALTER TABLE `notifications`
-    ADD CONSTRAINT `notifications_exactly_one_recipient_chk`
-    CHECK ((`user_id` IS NULL) <> (`admin_id` IS NULL));
-
 ALTER TABLE `user_devices`
     MODIFY COLUMN `user_id` INTEGER NULL,
     ADD COLUMN `admin_id` INTEGER NULL,
@@ -141,6 +141,5 @@ ALTER TABLE `user_devices`
     ADD CONSTRAINT `user_devices_admin_id_fkey`
         FOREIGN KEY (`admin_id`) REFERENCES `admins`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
-ALTER TABLE `user_devices`
-    ADD CONSTRAINT `user_devices_exactly_one_owner_chk`
-    CHECK ((`user_id` IS NULL) <> (`admin_id` IS NULL));
+-- MySQL does not permit CHECK-constrained columns to participate in foreign
+-- keys with cascading actions. The application enforces one owner per record.

@@ -209,7 +209,7 @@ model Report {
   images            Json?
   rating            Int?
   createdAt         DateTime             @default(now()) @map("created_at")
-  updatedAt         DateTime             @updatedAt @map("updated_at")
+  updatedAt         DateTime             @default(now()) @updatedAt @map("updated_at")
   pointsAwarded     Int                  @default(0) @map("points_awarded")
   approvalStatus    ReportApprovalStatus @default(APPROVED) @map("approval_status")
   rejectionReason   String?              @map("rejection_reason") @db.Text

@@ -37,6 +37,19 @@ function serializeNotification(notification) {
   };
 }
 
+function validateNotificationRecipient(input) {
+  const hasUser = input.userId !== undefined && input.userId !== null;
+  const hasAdmin = input.adminId !== undefined && input.adminId !== null;
+  if (hasUser === hasAdmin) {
+    throw new AppError('يجب تحديد مستلم واحد فقط للإشعار', 400);
+  }
+  const recipientId = Number(hasAdmin ? input.adminId : input.userId);
+  if (!Number.isSafeInteger(recipientId) || recipientId < 1) {
+    throw new AppError('معرف مستلم الإشعار غير صالح', 400);
+  }
+  return input;
+}
+
 async function deliverPushBestEffort(notification) {
   if (!isFirebaseConfigured()) return;
 
@@ -94,6 +107,7 @@ async function deliverPushBestEffort(notification) {
 }
 
 async function createInAppNotification(input, dbClient = prisma) {
+  validateNotificationRecipient(input);
   let notification;
 
   try {
@@ -412,4 +426,5 @@ module.exports = {
   sendNotificationPush,
   sendUpcomingMissionReminders,
   unregisterDevice,
+  validateNotificationRecipient,
 };

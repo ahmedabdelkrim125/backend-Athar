@@ -12,7 +12,10 @@ const {
   assertManualAssignmentUpdateAllowed,
   assertMissionCheckInEligible,
 } = require('../src/utils/mission-checkin');
-const { buildMissionReminderEventKey } = require('../src/services/notification.service');
+const {
+  buildMissionReminderEventKey,
+  validateNotificationRecipient,
+} = require('../src/services/notification.service');
 const {
   isEligibleNearbyVolunteerLocation,
 } = require('../src/services/volunteer-location.service');
@@ -194,6 +197,14 @@ test('mission reminder event keys are deterministic for the same task occurrence
     buildMissionReminderEventKey(9, 4, startsAt),
     'mission-reminder:9:4:2026-11-03T10:00:00.000Z',
   );
+});
+
+test('notifications require exactly one valid volunteer or admin recipient', () => {
+  assert.equal(validateNotificationRecipient({ userId: 7 }).userId, 7);
+  assert.equal(validateNotificationRecipient({ adminId: 2 }).adminId, 2);
+  assert.throws(() => validateNotificationRecipient({}), AppError);
+  assert.throws(() => validateNotificationRecipient({ userId: 1, adminId: 2 }), AppError);
+  assert.throws(() => validateNotificationRecipient({ userId: 0 }), AppError);
 });
 
 test('location targeting requires explicit opt-in, fresh accurate coordinates, and proximity', () => {

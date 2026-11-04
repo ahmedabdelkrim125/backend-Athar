@@ -3,7 +3,6 @@ ALTER TABLE `tasks`
     ADD COLUMN `approved_by_id` INTEGER NULL,
     ADD COLUMN `approved_at` DATETIME(3) NULL,
     ADD COLUMN `required_volunteers` INTEGER NULL,
-    ADD COLUMN `attendance_radius_meters` INTEGER NULL,
     ADD INDEX `tasks_approval_status_date_idx` (`approval_status`, `date`),
     ADD INDEX `tasks_approved_by_id_idx` (`approved_by_id`),
     ADD CONSTRAINT `tasks_approved_by_id_fkey` FOREIGN KEY (`approved_by_id`) REFERENCES `volunteers`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
